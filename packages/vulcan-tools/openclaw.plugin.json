@@ -1,0 +1,98 @@
+{
+  "id": "vulcan-tools",
+  "name": "Vulcan Tools",
+  "description": "Proxies Vulcan LuaSkills tools into OpenClaw through vulcan-host.",
+  "contracts": {
+    "tools": [
+      "vulcan_luaskill_call",
+      "vulcan-codekit-ast-detail",
+      "vulcan-codekit-ast-tree",
+      "vulcan-codekit-markdown-menu",
+      "vulcan-codekit-node-source",
+      "vulcan-codekit-patch",
+      "vulcan-codekit-rg",
+      "vulcan-curl-get",
+      "vulcan-curl-post",
+      "vulcan-curl-request",
+      "vulcan-file-edit",
+      "vulcan-file-list",
+      "vulcan-file-read",
+      "vulcan-lua-run",
+      "vulcan-testkit-run",
+      "vulcan-workmem-delete",
+      "vulcan-workmem-get",
+      "vulcan-workmem-get-all",
+      "vulcan-workmem-list",
+      "vulcan-workmem-set",
+      "vulcan-workmem-task-close",
+      "vulcan-workmem-task-create",
+      "vulcan-workmem-task-list"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "endpoint": {
+        "type": "string",
+        "description": "vulcan-host gRPC endpoint, for example 127.0.0.1:19202."
+      },
+      "protoPath": {
+        "type": "string",
+        "description": "Path to vulcan-mcp-client/proto/v1/mcp_service.proto for dynamic gRPC loading."
+      },
+      "enabled": {
+        "type": "boolean",
+        "description": "Whether this plugin should expose Vulcan tools."
+      },
+      "host": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Optional local vulcan-host autostart policy used by no-TUI OpenClaw installs.",
+        "properties": {
+          "autoStart": {
+            "type": "boolean",
+            "description": "Whether vulcan-tools should auto-start one local vulcan-host background process when the configured endpoint is unreachable."
+          },
+          "command": {
+            "type": "string",
+            "description": "Optional explicit vulcan-mcp executable path or PATH command used by runtime autostart."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional extra command-line arguments passed to the auto-started vulcan-host process."
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Optional working directory used when the runtime auto-starts vulcan-host."
+          },
+          "readyTimeoutMs": {
+            "type": "number",
+            "description": "Maximum time in milliseconds to wait for vulcan-host readiness after runtime autostart."
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            },
+            "description": "Optional extra environment variables injected into the auto-started vulcan-host process."
+          }
+        }
+      },
+      "tools": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  }
+}

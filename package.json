@@ -1,0 +1,20 @@
+{
+  "name": "vulcan-plugins-openclaw",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "build": "tsc -p packages/shared/tsconfig.build.json && tsc -p packages/vulcan-tools/tsconfig.build.json && tsc -p packages/vulcan-memory/tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "install:openclaw-local": "node ./scripts/install-openclaw-local.mjs",
+    "prepare:linked-install": "node ./scripts/prepare-openclaw-linked-install.mjs",
+    "sync:memory": "tsx packages/vulcan-memory/src/sync-vmm-tools.ts",
+    "sync:tools": "tsx packages/vulcan-tools/src/sync.ts"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

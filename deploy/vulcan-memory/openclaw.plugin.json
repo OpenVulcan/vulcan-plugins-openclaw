@@ -1,0 +1,53 @@
+{
+  "id": "vulcan-memory",
+  "name": "Vulcan Memory",
+  "description": "Connects OpenClaw memory hooks and tools to Vulcan Memory Mesh through vulcan-host.",
+  "kind": "memory",
+  "contracts": {
+    "tools": [
+      "memory_search",
+      "memory_get",
+      "vulcan_memory_search",
+      "vulcan_memory_get"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "endpoint": {
+        "type": "string",
+        "description": "vulcan-host gRPC endpoint, for example 127.0.0.1:19202."
+      },
+      "protoPath": {
+        "type": "string",
+        "description": "Path to vulcan-mcp-client/proto/v1/mcp_service.proto for dynamic gRPC loading."
+      },
+      "memory": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether Vulcan memory tools and hooks are enabled."
+          },
+          "autoRecall": {
+            "type": "boolean",
+            "description": "Whether before_prompt_build should inject VMM recall context."
+          },
+          "autoPostAction": {
+            "type": "boolean",
+            "description": "Whether agent_end should write a clipped turn summary to VMM through vulcan-host. Default false."
+          },
+          "recallTopK": {
+            "type": "number",
+            "description": "Maximum VMM recall hits per automatic query."
+          }
+        }
+      }
+    }
+  }
+}
