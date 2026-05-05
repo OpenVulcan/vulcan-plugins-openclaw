@@ -313,6 +313,40 @@ export interface VulcanVmmProfileBundleResponse {
   traceId?: string | undefined;
 }
 
+// VulcanVmmProfileNodeEntry represents one durable profile node returned after a manual profile adjustment review.
+// VulcanVmmProfileNodeEntry 表示手工画像调整评审后返回的一条长期画像节点。
+export interface VulcanVmmProfileNodeEntry {
+  profileNodeId: string;
+  target: string;
+  bindId: string;
+  content: string;
+  priority: string;
+  level: string;
+  refreshWeight: number;
+  profileDate: string;
+  expiresTimestamp: string;
+  levelReason: string;
+  sourceKind: string;
+  sourceId: string;
+}
+
+// VulcanVmmRetiredProfileNodeEntry represents one retired profile node plus the explicit manual-review reason.
+// VulcanVmmRetiredProfileNodeEntry 表示一条被退役的画像节点以及明确的手工评审原因。
+export interface VulcanVmmRetiredProfileNodeEntry {
+  profileNodeId: string;
+  reason: string;
+}
+
+// VulcanVmmProfileAdjustResponse acknowledges one explicit natural-language profile adjustment.
+// VulcanVmmProfileAdjustResponse 用于确认一次显式自然语言画像调整请求。
+export interface VulcanVmmProfileAdjustResponse {
+  instructionId: string;
+  acceptedNodes: VulcanVmmProfileNodeEntry[];
+  retiredNodes: VulcanVmmRetiredProfileNodeEntry[];
+  reviewReason: string;
+  traceId?: string | undefined;
+}
+
 // VulcanVmmPostActionResponse acknowledges one durable postaction append request.
 // VulcanVmmPostActionResponse 用于确认一次持久化 postaction 追加请求。
 export interface VulcanVmmPostActionResponse {

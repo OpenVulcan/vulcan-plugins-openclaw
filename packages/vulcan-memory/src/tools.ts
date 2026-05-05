@@ -502,12 +502,12 @@ function findGeneratedDescriptor(toolName: string): VulcanToolDescriptor | undef
 
 // resolveGeneratedDescription uses host-owned descriptions when sync has already run.
 // resolveGeneratedDescription 在已执行同步时使用宿主拥有的描述。
-function resolveGeneratedDescription(toolName: string, fallback: string): string {
+export function resolveGeneratedDescription(toolName: string, fallback: string): string {
   return findGeneratedDescriptor(toolName)?.description || fallback;
 }
 
 // resolveGeneratedSchema uses host-owned JSON schema when sync has already run.
 // resolveGeneratedSchema 在已执行同步时使用宿主拥有的 JSON schema。
-function resolveGeneratedSchema(toolName: string, fallback: Record<string, unknown>): Record<string, unknown> {
+export function resolveGeneratedSchema(toolName: string, fallback: Record<string, unknown>): Record<string, unknown> {
   return findGeneratedDescriptor(toolName)?.inputSchema || fallback;
 }

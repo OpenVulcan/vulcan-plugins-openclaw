@@ -10,6 +10,10 @@ import {
 import { createVulcanMemoryCapability } from "./memory-capability.js";
 import { registerVulcanMemoryHooks } from "./hooks.js";
 import {
+  createVulcanProfileAdjustTool,
+  listVulcanProfileToolNames,
+} from "./profile-tools.js";
+import {
   createMemoryGetTool,
   createMemorySearchTool,
   createVulcanMemoryGetTool,
@@ -56,6 +60,14 @@ export default definePluginEntry({
     // 通过一份稳定注册表注册绑定管理工具，让没有 TUI 的宿主复用同一套工具契约外壳。
     for (const toolName of listVulcanBindingToolNames()) {
       api.registerTool((ctx) => createVulcanBindingTool(toolName, { api, config, ctx }), {
+        name: toolName,
+      });
+    }
+
+    // Register profile-adjust tools inside vulcan-memory so OpenClaw can expose AI-driven profile correction without adding a separate management plugin.
+    // 在 vulcan-memory 内注册画像调整工具，让 OpenClaw 可直接暴露 AI 驱动画像纠偏能力，而无需额外管理插件。
+    for (const toolName of listVulcanProfileToolNames()) {
+      api.registerTool((ctx) => createVulcanProfileAdjustTool({ api, config, ctx }), {
         name: toolName,
       });
     }

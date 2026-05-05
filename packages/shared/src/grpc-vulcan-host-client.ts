@@ -18,8 +18,11 @@ import type {
   VulcanVmmMemorySearchResponse,
   VulcanVmmPostActionResponse,
   VulcanVmmPrecheckResponse,
+  VulcanVmmProfileAdjustResponse,
   VulcanVmmProfileBundleResponse,
+  VulcanVmmProfileNodeEntry,
   VulcanVmmProjectEntry,
+  VulcanVmmRetiredProfileNodeEntry,
   VulcanVmmResolvedProject,
   VulcanVmmResolvedUser,
   VulcanStatus,
@@ -150,7 +153,10 @@ export class DynamicGrpcVulcanHostClient implements VulcanHostClient {
     const response = await this.callUnary<Record<string, unknown>>(
       this.loadServices().luaSkills,
       "ListTools",
-      { context: toLuaSkillClientContext(context) },
+      {
+        context: toLuaSkillClientContext(context),
+        projection: toLuaSkillProjectionContext(context),
+      },
     );
     return readArray(response.tools).map((entry) => normalizeLuaSkillDescriptor(entry));
   }
@@ -167,6 +173,7 @@ export class DynamicGrpcVulcanHostClient implements VulcanHostClient {
       "CallTool",
       {
         context: toLuaSkillClientContext(params.context),
+        projection: toLuaSkillProjectionContext(params.context),
         toolName: params.toolName,
         argumentsJson: JSON.stringify(params.arguments),
       },
@@ -214,6 +221,17 @@ export class DynamicGrpcVulcanHostClient implements VulcanHostClient {
     const response = await this.callUnary<Record<string, unknown>>(
       this.loadServices().hostAdapter,
       "ListVmmBindingTools",
+      { context: toHostAdapterClientContext(context) },
+    );
+    return readArray(response.tools).map((entry) => normalizeHostToolDescriptor(entry));
+  }
+
+  // listVmmProfileTools returns authoritative VMM profile-adjust descriptors from HostAdapterService.
+  // listVmmProfileTools 从 HostAdapterService 返回权威 VMM 画像调整工具描述。
+  async listVmmProfileTools(context: VulcanHostContext): Promise<VulcanToolDescriptor[]> {
+    const response = await this.callUnary<Record<string, unknown>>(
+      this.loadServices().hostAdapter,
+      "ListVmmProfileTools",
       { context: toHostAdapterClientContext(context) },
     );
     return readArray(response.tools).map((entry) => normalizeHostToolDescriptor(entry));
@@ -374,6 +392,34 @@ export class DynamicGrpcVulcanHostClient implements VulcanHostClient {
       spaceProfile: readOptionalString(response.spaceProfile),
       projectProfile: readOptionalString(response.projectProfile),
       userProfile: readOptionalString(response.userProfile),
+      traceId: readOptionalString(response.traceId),
+    };
+  }
+
+  // applyVmmProfileInstruction submits one explicit natural-language profile correction for the current durable scope.
+  // applyVmmProfileInstruction 为当前长期作用域提交一条显式自然语言画像纠偏指令。
+  async applyVmmProfileInstruction(params: {
+    context: VulcanHostContext;
+    userId: string;
+    projectId: string;
+    scope: "user" | "project" | "team" | "space";
+    instruction: string;
+  }): Promise<VulcanVmmProfileAdjustResponse> {
+    const response = await this.callUnary<Record<string, unknown>>(
+      this.loadServices().vmm,
+      "ApplyProfileInstruction",
+      {
+        target: toProfileTargetEnum(params.scope),
+        userId: params.userId,
+        projectId: params.projectId,
+        instruction: params.instruction,
+      },
+    );
+    return {
+      instructionId: String(response.instructionId ?? ""),
+      acceptedNodes: readArray(response.acceptedNodes).map((entry) => normalizeVmmProfileNode(entry)),
+      retiredNodes: readArray(response.retiredNodes).map((entry) => normalizeVmmRetiredProfileNode(entry)),
+      reviewReason: String(response.reviewReason ?? ""),
       traceId: readOptionalString(response.traceId),
     };
   }
@@ -643,6 +689,30 @@ function toLuaSkillClientContext(context: VulcanHostContext): Record<string, unk
   };
 }
 
+// toLuaSkillProjectionContext declares OpenClaw as a managed-session host and passes the live session id when available.
+// toLuaSkillProjectionContext 声明 OpenClaw 是托管 session 的宿主，并在可用时传递实时 session id。
+function toLuaSkillProjectionContext(context: VulcanHostContext): Record<string, unknown> {
+  return {
+    supportsManagedLuaskillSid: true,
+    sessionId: context.sessionId ?? context.sessionKey ?? "",
+  };
+}
+
+// toProfileTargetEnum converts one shared scope name into the protobuf enum label expected by proto-loader.
+// toProfileTargetEnum 将共享层级名称转换为 proto-loader 期望的 protobuf 枚举标签。
+function toProfileTargetEnum(scope: "user" | "project" | "team" | "space"): string {
+  switch (scope) {
+    case "user":
+      return "PROFILE_TARGET_USER";
+    case "project":
+      return "PROFILE_TARGET_PROJECT";
+    case "team":
+      return "PROFILE_TARGET_TEAM";
+    case "space":
+      return "PROFILE_TARGET_SPACE";
+  }
+}
+
 // toHostAdapterClientContext converts trusted host context into HostAdapter gRPC context fields.
 // toHostAdapterClientContext 将受信任宿主上下文转换为 HostAdapter gRPC context 字段。
 function toHostAdapterClientContext(context: VulcanHostContext): Record<string, unknown> {
@@ -732,6 +802,34 @@ function normalizeVmmTurnDetail(entry: Record<string, unknown>): VulcanVmmTurnDe
       type: String(item.type ?? ""),
       content: String(item.content ?? ""),
     })),
+  };
+}
+
+// normalizeVmmProfileNode maps one dynamic protobuf profile node into the stable shared profile-adjust shape.
+// normalizeVmmProfileNode 将一条动态 protobuf 画像节点映射为稳定的共享画像调整结构。
+function normalizeVmmProfileNode(entry: Record<string, unknown>): VulcanVmmProfileNodeEntry {
+  return {
+    profileNodeId: String(entry.profileNodeId ?? ""),
+    target: String(entry.target ?? ""),
+    bindId: String(entry.bindId ?? ""),
+    content: String(entry.content ?? ""),
+    priority: String(entry.priority ?? ""),
+    level: String(entry.level ?? ""),
+    refreshWeight: readFiniteNumber(entry.refreshWeight, 0),
+    profileDate: String(entry.profileDate ?? ""),
+    expiresTimestamp: String(entry.expiresTimestamp ?? ""),
+    levelReason: String(entry.levelReason ?? ""),
+    sourceKind: String(entry.sourceKind ?? ""),
+    sourceId: String(entry.sourceId ?? ""),
+  };
+}
+
+// normalizeVmmRetiredProfileNode maps one dynamic protobuf retired profile node into the stable shared result shape.
+// normalizeVmmRetiredProfileNode 将一条动态 protobuf 退役画像节点映射为稳定的共享结果结构。
+function normalizeVmmRetiredProfileNode(entry: Record<string, unknown>): VulcanVmmRetiredProfileNodeEntry {
+  return {
+    profileNodeId: String(entry.profileNodeId ?? ""),
+    reason: String(entry.reason ?? ""),
   };
 }
 

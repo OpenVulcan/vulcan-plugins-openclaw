@@ -14,6 +14,7 @@ import type {
   VulcanVmmPostActionResponse,
   VulcanVmmPrecheckResponse,
   VulcanVmmProfileBundleResponse,
+  VulcanVmmProfileAdjustResponse,
   VulcanVmmResolvedProject,
   VulcanVmmResolvedUser,
   VulcanStatus,
@@ -57,6 +58,7 @@ export interface VulcanHostClient {
   }): Promise<VulcanToolCallResponse>;
   listVmmMemoryTools(context: VulcanHostContext): Promise<VulcanToolDescriptor[]>;
   listVmmBindingTools(context: VulcanHostContext): Promise<VulcanToolDescriptor[]>;
+  listVmmProfileTools(context: VulcanHostContext): Promise<VulcanToolDescriptor[]>;
   listVmmProjects(context: VulcanHostContext): Promise<VulcanVmmListProjectsResponse>;
   resolveVmmProject(params: {
     context: VulcanHostContext;
@@ -90,6 +92,13 @@ export interface VulcanHostClient {
     projectId: string;
     includeExplanation?: boolean | undefined;
   }): Promise<VulcanVmmProfileBundleResponse>;
+  applyVmmProfileInstruction(params: {
+    context: VulcanHostContext;
+    userId: string;
+    projectId: string;
+    scope: "user" | "project" | "team" | "space";
+    instruction: string;
+  }): Promise<VulcanVmmProfileAdjustResponse>;
   preCheckVmm(params: {
     context: VulcanHostContext;
     sessionId: string;

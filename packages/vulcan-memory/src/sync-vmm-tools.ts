@@ -31,6 +31,10 @@ const FALLBACK_MEMORY_TOOL_NAMES = [
 // FALLBACK_BINDING_TOOL_NAMES 为旧版 vulcan-host 保留一个引导期精简绑定/管理工具名。
 const FALLBACK_BINDING_TOOL_NAMES = ["vulcan_bind"] as const;
 
+// FALLBACK_PROFILE_TOOL_NAMES keeps one bootstrap profile-adjust tool name for older vulcan-host runtimes.
+// FALLBACK_PROFILE_TOOL_NAMES 为旧版 vulcan-host 保留一个引导期画像调整工具名称。
+const FALLBACK_PROFILE_TOOL_NAMES = ["vulcan_profile_adjust"] as const;
+
 // main fetches VMM memory plus binding/admin descriptors from vulcan-host and writes the generated module.
 // main 从 vulcan-host 获取 VMM 记忆与绑定管理工具描述，并写入生成模块。
 async function main(): Promise<void> {
@@ -40,11 +44,13 @@ async function main(): Promise<void> {
   const hostContext = buildBaseHostContext(config, "sync-memory");
   const memoryDescriptors = await client.listVmmMemoryTools(hostContext);
   const bindingDescriptors = await listOptionalBindingDescriptors(client, config);
+  const profileDescriptors = await listOptionalProfileDescriptors(client, config);
   const descriptors = normalizeGeneratedDescriptors(
-    [...memoryDescriptors, ...bindingDescriptors],
+    [...memoryDescriptors, ...bindingDescriptors, ...profileDescriptors],
   );
   const memoryToolNames = listGeneratedMemoryToolNames(descriptors);
   const bindingToolNames = listGeneratedBindingToolNames(descriptors);
+  const profileToolNames = listGeneratedProfileToolNames(descriptors);
   const generatedPath = path.join(root, "src", "generated", "vmm-tools.generated.ts");
   const manifestPath = path.join(root, "openclaw.plugin.json");
   await writeTextFile(
@@ -57,7 +63,7 @@ async function main(): Promise<void> {
   const toolNames = await updateManifestTools({
     manifestPath,
     baseToolNames: memoryToolNames,
-    generatedToolNames: bindingToolNames,
+    generatedToolNames: [...bindingToolNames, ...profileToolNames],
   });
 
   // Memory and binding/admin manifest names now prefer synchronized descriptor annotations, with local lists kept only as bootstrap fallback.
@@ -65,6 +71,26 @@ async function main(): Promise<void> {
   console.log(`Synced ${descriptors.length} VMM descriptors into ${generatedPath}.`);
   console.log(`Updated ${manifestPath} contracts.tools (${toolNames.length} total).`);
   console.log("Next: restart/reload the Gateway if OpenClaw keeps old memory tool descriptions.");
+}
+
+// listOptionalProfileDescriptors keeps sync usable against older vulcan-host runtimes that have not restarted onto the new profile-descriptor RPC yet.
+// listOptionalProfileDescriptors 让同步脚本在 vulcan-host 尚未重启到新 profile-descriptor RPC 时仍然可以继续工作。
+async function listOptionalProfileDescriptors(
+  client: ReturnType<typeof createVulcanHostClient>,
+  config: ReturnType<typeof resolveVulcanConfig>,
+): Promise<Awaited<ReturnType<typeof client.listVmmProfileTools>>> {
+  try {
+    return await client.listVmmProfileTools(buildBaseHostContext(config, "sync-memory-profile"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/\bUNIMPLEMENTED\b/u.test(message)) {
+      console.warn(
+        "Profile descriptor RPC is not available on the currently running vulcan-host instance yet; continuing without profile descriptors.",
+      );
+      return [];
+    }
+    throw error;
+  }
 }
 
 // listGeneratedMemoryToolNames extracts explicit Vulcan tools first and leaves canonical bridges after them so host manifests prefer the Vulcan-native surface.
@@ -119,6 +145,19 @@ function listGeneratedBindingToolNames(descriptors: VulcanToolDescriptor[]): str
     .filter((descriptor) => readRegistrationSurface(descriptor) === "host-binding-consolidated")
     .map((descriptor) => descriptor.name);
   return names.length > 0 ? names : [...FALLBACK_BINDING_TOOL_NAMES];
+}
+
+// listGeneratedProfileToolNames extracts optional profile-adjust tools so OpenClaw can expose them through vulcan-memory when the host contract declares support.
+// listGeneratedProfileToolNames 提取可选画像调整工具，让 OpenClaw 在宿主契约声明支持时通过 vulcan-memory 暴露它们。
+function listGeneratedProfileToolNames(descriptors: VulcanToolDescriptor[]): string[] {
+  const names = descriptors
+    .filter((descriptor) => readToolGroup(descriptor) === "vmm-profile")
+    .filter((descriptor) => {
+      const surface = readRegistrationSurface(descriptor);
+      return surface === "host-profile-adjust";
+    })
+    .map((descriptor) => descriptor.name);
+  return names.length > 0 ? names : [...FALLBACK_PROFILE_TOOL_NAMES];
 }
 
 // readToolGroup keeps only non-empty tool_group annotations so manifest sync can distinguish binding/admin descriptors from memory descriptors.

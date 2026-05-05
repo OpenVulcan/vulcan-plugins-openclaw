@@ -379,6 +379,48 @@ export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   },
   {
     "annotations": {
+      "execution_mode": "remote",
+      "optional_context": [
+        "agent"
+      ],
+      "registration_surface": "host-profile-adjust",
+      "schema_version": 1,
+      "source": "vmm.host-profile-contract",
+      "stable": true,
+      "tool_group": "vmm-profile",
+      "visibility": "optional"
+    },
+    "description": "Adjust one durable VMM profile with an explicit natural-language instruction. The system already performs automatic profile extraction and refresh, so use this tool only when the user clearly asks to correct, reinforce, remove, or add long-lived profile information. Do not use it for ordinary temporary context, one-off status updates, or guesses.\\n\\nInput parameters:\\n- scope: user | project | team | space.\\n- instruction: Explicit natural-language profile adjustment for the selected scope.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "instruction": {
+          "description": "Explicit natural-language correction or addition for the selected long-lived profile. Use this only when the user clearly asks to correct, reinforce, remove, or add durable profile information.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "scope": {
+          "description": "Profile scope to adjust. user and project target the current bound identities directly; team and space reuse the current project binding lineage.",
+          "enum": [
+            "user",
+            "project",
+            "team",
+            "space"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "instruction"
+      ],
+      "type": "object"
+    },
+    "name": "vulcan_profile_adjust",
+    "source": "vmm.host-profile-contract"
+  },
+  {
+    "annotations": {
       "execution_mode": "hybrid",
       "optional_context": [
         "agent"
