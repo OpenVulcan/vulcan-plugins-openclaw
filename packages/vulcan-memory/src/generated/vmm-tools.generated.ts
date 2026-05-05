@@ -8,9 +8,102 @@ import type { VulcanToolDescriptor } from "@vulcan-plugins-openclaw/shared";
 export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   {
     "annotations": {
+      "execution_mode": "remote",
+      "registration_surface": "host-memory-canonical",
       "schema_version": 1,
       "source": "vmm.grpc-integration-contract",
-      "stable": true
+      "stable": true,
+      "tool_group": "vmm-memory",
+      "visibility": "public"
+    },
+    "description": "Legacy bridge surface for hosts that still require the canonical `memory_get` name. Read one exact Vulcan memory pseudo-document returned by `memory_search`, including source turn documents and durable memory previews. Hosts with a stronger Vulcan-native tool surface may choose to hide this bridge and prefer `vulcan_memory_get` instead.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "corpus": {
+          "description": "`wiki` is unsupported by Vulcan memory and will return an unavailable result.",
+          "enum": [
+            "memory",
+            "all",
+            "wiki"
+          ],
+          "type": "string"
+        },
+        "from": {
+          "description": "Optional 1-based start line for paged reads.",
+          "type": "number"
+        },
+        "lines": {
+          "description": "Optional line count for paged reads.",
+          "type": "number"
+        },
+        "path": {
+          "description": "Pseudo-path returned by memory_search, such as `vulcan-turns/123.md` or `vulcan-memories/456.md`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "memory_get",
+    "source": "vmm.grpc-integration-contract"
+  },
+  {
+    "annotations": {
+      "execution_mode": "remote",
+      "registration_surface": "host-memory-canonical",
+      "schema_version": 1,
+      "source": "vmm.grpc-integration-contract",
+      "stable": true,
+      "tool_group": "vmm-memory",
+      "visibility": "public"
+    },
+    "description": "Legacy bridge surface for hosts that still require the canonical `memory_search` name. Search durable VMM memories and session-backed source turns before answering when prior project facts, preferences, requirements, bugs, or decisions may matter. Hosts with a stronger Vulcan-native tool surface may choose to hide this bridge and prefer `vulcan_memory_search` instead.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "corpus": {
+          "description": "Restrict results to durable VMM memories or session-backed hits. `all` currently behaves like Vulcan memory-only recall, and `wiki` is unsupported.",
+          "enum": [
+            "memory",
+            "sessions",
+            "all",
+            "wiki"
+          ],
+          "type": "string"
+        },
+        "maxResults": {
+          "description": "Optional maximum hit count. Prefer 3 to 8 for targeted recall.",
+          "type": "number"
+        },
+        "minScore": {
+          "description": "Optional minimum synthetic score threshold between 0 and 1.",
+          "type": "number"
+        },
+        "query": {
+          "description": "Search query for prior project facts, source-turn context, user preferences, or decisions.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "memory_search",
+    "source": "vmm.grpc-integration-contract"
+  },
+  {
+    "annotations": {
+      "execution_mode": "remote",
+      "registration_surface": "vmm-raw",
+      "schema_version": 1,
+      "source": "vmm.grpc-integration-contract",
+      "stable": true,
+      "tool_group": "vmm-memory",
+      "visibility": "advanced"
     },
     "description": "Search durable memories for the current workspace. Use this before answering when you need stored facts, prior decisions, requirements, bugs, preferences, or long-lived project context. Prefer one to three concrete query strings. If a hit includes a non-zero source_turn_id, you may follow up with vmm_turn_details to inspect the original conversation behind that memory.\n\nInput parameters:\n- queries: Simple query string list. Prefer 1-3 concrete queries for precision; max 16 is reserved for broad scans.\n- topK: Optional maximum hit count per query. Prefer 3 to 8 unless broader recall is truly necessary.",
     "inputSchema": {
@@ -44,9 +137,13 @@ export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   },
   {
     "annotations": {
+      "execution_mode": "remote",
+      "registration_surface": "vmm-raw",
       "schema_version": 1,
       "source": "vmm.grpc-integration-contract",
-      "stable": true
+      "stable": true,
+      "tool_group": "vmm-memory",
+      "visibility": "advanced"
     },
     "description": "Write durable memories for the current workspace. Use this only for stable facts, confirmed constraints, architecture decisions, durable requirements, reusable project context, or known lasting bugs and debt. Do not write profile/persona information here, including user/project/team/space profile facts, behavioral preferences, traits, standing instructions, or long-lived identity/context rules; VMM handles profile extraction, review, refresh, and injection automatically through the profile pipeline. Do not use it for temporary status, one-off logs, transient errors, raw brainstorming fragments, or unconfirmed guesses. Each item should be atomic, future-reusable, and worth remembering across later tasks.\n\nInput parameters:\n- items: Array of atomic durable memory items, max 8.\n- items[].abstract: Required short summary for indexing and quick recall.\n- items[].details: Required full durable memory text.\n- items[].category: Memory category code. 0 = general, 1 = architecture_decision, 2 = tech_spec_api, 3 = business_logic, 4 = requirement_todo, 5 = project_context, 6 = logical_bug_debt, 7 = security_policy.\n- items[].scopeLevel: Scope of applicability. 1 = session for short-horizon working context, 2 = project for project-wide rules or knowledge, 3 = user for cross-project user-level preferences or standing facts, 0 or omit = let the backend choose its default scope; the current backend default is project.\n- items[].priority: Recall importance. 1 = P0 critical, 2 = P1 important, 3 = P2 normal, 0 or omit = let the backend choose its default priority; the current backend default is P2. Priority answers how important it is to surface this memory again when relevant; it does not describe durability or abstraction.\n- items[].memoryLevel: Durability and abstraction tier. 1 = L0 one-off or short-horizon durable context, 2 = L1 reusable situational/project-operational memory, 3 = L2 stable project or domain knowledge, 4 = L3 foundational invariant or strong constraint, 0 or omit = let the backend derive a default level from scope. Memory level answers how durable and broadly reusable the memory is over time; it does not describe recall urgency.",
     "inputSchema": {
@@ -114,9 +211,13 @@ export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   },
   {
     "annotations": {
+      "execution_mode": "remote",
+      "registration_surface": "vmm-raw",
       "schema_version": 1,
       "source": "vmm.grpc-integration-contract",
-      "stable": true
+      "stable": true,
+      "tool_group": "vmm-memory",
+      "visibility": "advanced"
     },
     "description": "Load structured turn details for source_turn_id values returned by vmm_memory_search. Use this only when a search hit has a non-zero source_turn_id and you need the original dialogue context behind that memory. This tool is for source-conversation inspection, not for broad discovery.\n\nInput parameters:\n- turnIds: Array of decimal source_turn_id strings returned by vmm_memory_search. Use values such as \"123\" and skip 0.",
     "inputSchema": {
@@ -145,10 +246,149 @@ export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   {
     "annotations": {
       "execution_mode": "hybrid",
+      "optional_context": [
+        "agent"
+      ],
+      "registration_surface": "host-binding-consolidated",
       "schema_version": 1,
       "source": "vmm.host-binding-contract",
       "stable": true,
-      "tool_group": "vmm-binding"
+      "tool_group": "vmm-binding",
+      "visibility": "admin"
+    },
+    "description": "Inspect, list, bind, or clear host-level VMM user/project bindings through one compact management surface. Use this when the host does not have an OpenCode-style TUI and you still need to choose a shared default user_id/project_id, inspect the active binding state, or assign one main agent to a dedicated project.\n\nInput parameters:\n- action: inspect | list | bind | clear.\n- resource: bindings | user | project.\n- scope: global | agent. Use global for shared defaults and agent for one main-agent project override.\n- ref: Existing numeric user_id/project_id, durable user name, or canonical Team/Space/Project path depending on resource.\n- agentId: Optional main-agent id for inspect, bind(scope=agent), or clear.\n- createIfMissing: Optional boolean that only applies to bind and only when the selected ref can be created safely.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "Binding operation. inspect returns the current effective binding state, list returns durable VMM identities, bind persists one host binding target, and clear removes one per-agent project override.",
+          "enum": [
+            "inspect",
+            "list",
+            "bind",
+            "clear"
+          ],
+          "type": "string"
+        },
+        "agentId": {
+          "description": "Optional host main-agent id. Omit to reuse the current trusted main-agent context when the host provides one.",
+          "type": "string"
+        },
+        "createIfMissing": {
+          "description": "Whether the host may ask VMM to create a missing durable user name or canonical Team/Space/Project path while binding.",
+          "type": "boolean"
+        },
+        "ref": {
+          "description": "Existing numeric user_id/project_id, durable user name, or canonical Team/Space/Project path depending on the selected resource.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "resource": {
+          "description": "Binding resource. Use bindings with inspect, user or project with list/bind, and project with clear.",
+          "enum": [
+            "bindings",
+            "user",
+            "project"
+          ],
+          "type": "string"
+        },
+        "scope": {
+          "description": "Binding scope. global updates the shared default host binding, while agent updates or clears one main-agent project override.",
+          "enum": [
+            "global",
+            "agent"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "resource"
+      ],
+      "type": "object"
+    },
+    "name": "vulcan_bind",
+    "source": "vmm.host-binding-contract"
+  },
+  {
+    "annotations": {
+      "execution_mode": "remote",
+      "registration_surface": "host-memory-compat",
+      "schema_version": 1,
+      "source": "vmm.grpc-integration-contract",
+      "stable": true,
+      "tool_group": "vmm-memory",
+      "visibility": "public"
+    },
+    "description": "Primary Vulcan-native follow-up reader for non-zero source_turn_id values returned by `vulcan_memory_search`. Use this when grouped search results point at one or more real source turns and you need structured turn details instead of pseudo-document reads.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "turnIds": {
+          "description": "Decimal source_turn_id strings returned by vulcan_memory_search. Skip 0 because it has no source turn.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "turnIds"
+      ],
+      "type": "object"
+    },
+    "name": "vulcan_memory_get",
+    "source": "vmm.grpc-integration-contract"
+  },
+  {
+    "annotations": {
+      "execution_mode": "remote",
+      "registration_surface": "host-memory-compat",
+      "schema_version": 1,
+      "source": "vmm.grpc-integration-contract",
+      "stable": true,
+      "tool_group": "vmm-memory",
+      "visibility": "public"
+    },
+    "description": "Primary Vulcan-native memory search surface for the current host runtime. Search durable Vulcan Memory Mesh memories when prior project facts, requirements, decisions, bugs, preferences, or durable context may matter. The grouped result format keeps raw hits, memory ids, category labels, and source_turn_id values available for precise follow-up inspection.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "queries": {
+          "description": "Concrete memory search queries. Prefer 1-3 precise strings; broad scans may use more when triaging.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array"
+        },
+        "topK": {
+          "description": "Optional maximum hit count per query. Prefer 3 to 8 for direct recall.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "queries"
+      ],
+      "type": "object"
+    },
+    "name": "vulcan_memory_search",
+    "source": "vmm.grpc-integration-contract"
+  },
+  {
+    "annotations": {
+      "execution_mode": "hybrid",
+      "optional_context": [
+        "agent"
+      ],
+      "registration_surface": "host-binding-legacy",
+      "schema_version": 1,
+      "source": "vmm.host-binding-contract",
+      "stable": true,
+      "tool_group": "vmm-binding",
+      "visibility": "admin"
     },
     "description": "Bind one host main agent to a dedicated VMM project_id while keeping the shared default project untouched. Use this when one agent needs an isolated project binding and all unconfigured agents should still fall back to the shared default project.\n\nInput parameters:\n- agentId: Optional main-agent id to override.\n- projectRef: Existing numeric project id or canonical Team/Space/Project path.\n- createIfMissing: Optional boolean. Set true only when the host is allowed to create a missing canonical Team/Space/Project path.",
     "inputSchema": {
@@ -179,10 +419,12 @@ export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   {
     "annotations": {
       "execution_mode": "hybrid",
+      "registration_surface": "host-binding-legacy",
       "schema_version": 1,
       "source": "vmm.host-binding-contract",
       "stable": true,
-      "tool_group": "vmm-binding"
+      "tool_group": "vmm-binding",
+      "visibility": "admin"
     },
     "description": "Resolve or create one durable VMM project, then persist its real numeric project_id as the host's shared default project binding. Use this when a host without an OpenCode-style TUI needs to manage its shared default project through tools.\n\nInput parameters:\n- projectRef: Existing numeric project id or canonical Team/Space/Project path.\n- createIfMissing: Optional boolean. Set true only when the host is allowed to create a missing canonical Team/Space/Project path.",
     "inputSchema": {
@@ -209,10 +451,12 @@ export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   {
     "annotations": {
       "execution_mode": "hybrid",
+      "registration_surface": "host-binding-legacy",
       "schema_version": 1,
       "source": "vmm.host-binding-contract",
       "stable": true,
-      "tool_group": "vmm-binding"
+      "tool_group": "vmm-binding",
+      "visibility": "admin"
     },
     "description": "Resolve or create one durable VMM user, then persist its real numeric user_id as the host's shared default user binding. Use this when the host does not provide an OpenCode-style TUI and you need to manage default user selection through tools instead.\n\nInput parameters:\n- userRef: Existing numeric user id or durable user name.\n- createIfMissing: Optional boolean. Set true only when the host is allowed to create a missing durable user name.",
     "inputSchema": {
@@ -239,10 +483,15 @@ export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   {
     "annotations": {
       "execution_mode": "local",
+      "optional_context": [
+        "agent"
+      ],
+      "registration_surface": "host-binding-legacy",
       "schema_version": 1,
       "source": "vmm.host-binding-contract",
       "stable": true,
-      "tool_group": "vmm-binding"
+      "tool_group": "vmm-binding",
+      "visibility": "admin"
     },
     "description": "Clear one host main-agent project override so that agent falls back to the shared default project binding again. Use this when a dedicated per-agent project is no longer needed.",
     "inputSchema": {
@@ -261,10 +510,15 @@ export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   {
     "annotations": {
       "execution_mode": "local",
+      "optional_context": [
+        "agent"
+      ],
+      "registration_surface": "host-binding-legacy",
       "schema_version": 1,
       "source": "vmm.host-binding-contract",
       "stable": true,
-      "tool_group": "vmm-binding"
+      "tool_group": "vmm-binding",
+      "visibility": "admin"
     },
     "description": "Inspect the effective VMM user/project bindings used by the current host adapter. Use this when you need to confirm the shared default user_id/project_id, inspect whether one main agent has a dedicated project override, or debug which binding source currently wins. This is a host-level binding inspection tool, not a memory recall tool.\n\nInput parameters:\n- agentId: Optional host main-agent id to inspect. Omit to inspect the current trusted agent when one is available.",
     "inputSchema": {
@@ -283,10 +537,12 @@ export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   {
     "annotations": {
       "execution_mode": "remote",
+      "registration_surface": "host-binding-legacy",
       "schema_version": 1,
       "source": "vmm.host-binding-contract",
       "stable": true,
-      "tool_group": "vmm-binding"
+      "tool_group": "vmm-binding",
+      "visibility": "admin"
     },
     "description": "List durable VMM Team/Space/Project entries so the host can bind one real numeric project_id or canonical display path before enabling memory workflows.",
     "inputSchema": {
@@ -300,10 +556,12 @@ export const GENERATED_VMM_TOOLS: VulcanToolDescriptor[] = [
   {
     "annotations": {
       "execution_mode": "remote",
+      "registration_surface": "host-binding-legacy",
       "schema_version": 1,
       "source": "vmm.host-binding-contract",
       "stable": true,
-      "tool_group": "vmm-binding"
+      "tool_group": "vmm-binding",
+      "visibility": "admin"
     },
     "description": "List durable VMM users so the host can bind one real numeric user_id instead of guessing identity. Use this before choosing or switching the shared default user binding.",
     "inputSchema": {

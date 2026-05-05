@@ -5,18 +5,20 @@
   "kind": "memory",
   "contracts": {
     "tools": [
-      "memory_search",
-      "memory_get",
-      "vulcan_memory_search",
       "vulcan_memory_get",
-      "vulcan_vmm_bind_agent_project",
-      "vulcan_vmm_bind_default_project",
-      "vulcan_vmm_bind_default_user",
-      "vulcan_vmm_clear_agent_project",
-      "vulcan_vmm_get_bindings",
-      "vulcan_vmm_list_projects",
-      "vulcan_vmm_list_users"
+      "vulcan_memory_search",
+      "memory_get",
+      "memory_search",
+      "vulcan_bind"
     ]
+  },
+  "toolMetadata": {
+    "memory_search": {
+      "optional": true
+    },
+    "memory_get": {
+      "optional": true
+    }
   },
   "activation": {
     "onStartup": true

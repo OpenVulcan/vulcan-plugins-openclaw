@@ -8,7 +8,7 @@ Vulcan OpenClaw Plugins provides native OpenClaw adapters for Vulcan LuaSkills t
 
 - `packages/shared`: shared configuration, OpenClaw context conversion, gRPC client, result normalization, and generated manifest helpers.
 - `packages/vulcan-tools`: normal tool plugin. It exposes a fallback dispatcher and generated per-tool LuaSkills proxies.
-- `packages/vulcan-memory`: memory plugin. It owns the OpenClaw memory slot, exposes canonical `memory_search` / `memory_get`, keeps grouped VMM compatibility tools, and drives full-mode precheck/postaction hooks.
+- `packages/vulcan-memory`: memory plugin. It owns the OpenClaw memory slot, promotes `vulcan_memory_search` / `vulcan_memory_get` as the primary Vulcan surface, keeps `memory_search` / `memory_get` only as optional bridge tools, and drives full-mode precheck/postaction hooks.
 
 ## Requirements
 
@@ -26,9 +26,9 @@ pnpm check
 pnpm prepare:linked-install
 ```
 
-If you want one local install flow that also writes OpenClaw config, enables the required hooks, pins the memory slot, and turns on vulcan-host runtime autostart, use:
+If you want one local install flow that also writes OpenClaw config, enables the required hooks, and pins the memory slot, use:
 
-如果你希望用一条本地安装流程同时完成 OpenClaw 配置写入、必需 hooks 开启、memory slot 绑定，以及 vulcan-host 运行时自动拉起，请直接使用：
+如果你希望用一条本地安装流程同时完成 OpenClaw 配置写入、必需 hooks 开启，以及 memory slot 绑定，请直接使用：
 
 ```powershell
 cd D:\projects\vulcan-plugins-openclaw
@@ -47,8 +47,6 @@ This one-shot installer performs:
 - enables `vulcan-tools` and `vulcan-memory`
 - enables `hooks.allowPromptInjection=true` and `hooks.allowConversationAccess=true`
 - sets `plugins.slots.memory = "vulcan-memory"`
-- enables `plugins.entries.vulcan-tools.config.host.autoStart=true`
-- auto-detects a local `vulcan-mcp` binary when possible
 - refreshes the OpenClaw plugin registry
 - restarts the OpenClaw Gateway
 
@@ -134,30 +132,32 @@ Hook policy notes:
 - `memory.profileRefreshTurns` controls how many later closed committed turns should pass before the hidden profile bundle refreshes again. Set it to `0` if you want scope-stable bundle caching without periodic refresh. Default `5`.
 - After changing hook policy or memory writeback settings, restart or reload the OpenClaw Gateway so the typed hook registry is rebuilt with the new policy.
 
-Autostart notes:
+Host service notes:
 
-自动启动说明：
+主机服务说明：
 
-- OpenClaw native plugin install already persists `enabled=true`, but that does not start `vulcan-host` for you.
-- `vulcan-tools.config.host.autoStart=true` lets the `vulcan-tools` runtime register one background bootstrap service that first probes `endpoint`, then launches `vulcan-mcp` only when the endpoint is unreachable.
-- The runtime autostart owner is intentionally `vulcan-tools` only, so `vulcan-memory` does not race to spawn a second host process.
-- If local binary auto-discovery fails, set `plugins.entries.vulcan-tools.config.host.command` manually to the `vulcan-mcp` executable path.
+- Run `vulcan-host` / `vulcan-mcp-client` as one external system service shared by your local hosts instead of expecting the plugin to spawn it for you.
+- When the endpoint is unreachable, Vulcan tools stay registered, hooks skip live recall or writeback work, and the plugin injects one temporary notice asking the model to tell the user that the Vulcan service is currently unavailable.
+- Registered Vulcan tools fail fast with one explicit unavailable message while the plugin retries the gRPC endpoint in the background.
+- After the service becomes reachable again, later calls and hooks resume normally without requiring you to re-enable the plugin.
 
 ## Binding Management
 
-OpenClaw does not provide the OpenCode TUI binding flow, so `vulcan-memory` now exposes dedicated tools for real VMM id management:
+OpenClaw does not provide the OpenCode TUI binding flow, so `vulcan-memory` now exposes one compact tool for real VMM id management:
 
-- `vulcan_vmm_get_bindings`
-- `vulcan_vmm_list_users`
-- `vulcan_vmm_bind_default_user`
-- `vulcan_vmm_list_projects`
-- `vulcan_vmm_bind_default_project`
-- `vulcan_vmm_bind_agent_project`
-- `vulcan_vmm_clear_agent_project`
+- `vulcan_bind`
 
 These tools persist runtime changes to `~/.openclaw/plugins/vulcan-bindings.json`.
 
-Their descriptions and JSON schemas are now intended to come from `vulcan-host` through the same VMM descriptor sync flow used by compatibility memory tools. If the currently running `vulcan-host` instance has not restarted onto the new binding-descriptor RPC yet, `pnpm sync:memory` will temporarily continue with memory descriptors only and the binding tools will fall back to their local built-in schema/description defaults.
+Its description and JSON schema are now intended to come from `vulcan-host` through the same VMM descriptor sync flow used by memory tools. If the currently running `vulcan-host` instance has not restarted onto the new binding-descriptor RPC yet, `pnpm sync:memory` will temporarily continue with memory descriptors only and the binding tool will fall back to its local built-in schema/description defaults.
+
+Compact binding usage:
+
+- `action=inspect` with `resource=bindings`: inspect the current effective shared default binding plus any agent project override
+- `action=list` with `resource=user|project`: list durable VMM users or projects
+- `action=bind` with `resource=user` and `scope=global`: bind the shared default user
+- `action=bind` with `resource=project` and `scope=global|agent`: bind the shared default project or one agent-specific project override
+- `action=clear` with `resource=project` and `scope=agent`: clear one agent-specific project override
 
 Binding rules:
 
@@ -180,7 +180,7 @@ After LuaSkills `install`, `update`, or `uninstall`, run the sync command again.
 
 ## VMM Descriptor Sync
 
-`vulcan-memory` now exposes canonical `memory_search` / `memory_get` plus stable grouped compatibility names `vulcan_memory_search` / `vulcan_memory_get`. The compatibility tools reuse VMM-owned descriptions and schemas synchronized from vulcan-host:
+`vulcan-memory` now exposes `vulcan_memory_search` / `vulcan_memory_get` as the primary model-facing Vulcan memory tools, while `memory_search` / `memory_get` remain optional bridge tools for workflows that still insist on the canonical OpenClaw names. The primary Vulcan tools reuse VMM-owned descriptions and schemas synchronized from vulcan-host:
 
 ```powershell
 cd D:\projects\vulcan-plugins-openclaw
@@ -209,9 +209,9 @@ Lifecycle commands intentionally stay as commands, not model tools. They can cha
 
 ## Memory Behavior
 
-`memory_search` and `memory_get` now form the primary OpenClaw memory surface. They are backed by a native `MemorySearchManager` that resolves one real VMM `user_id/project_id` binding before every memory flow.
+`vulcan_memory_search` and `vulcan_memory_get` now form the preferred OpenClaw memory surface. They are backed by the same native `MemorySearchManager` and VMM scope resolution chain, but their grouped output keeps raw hit grouping, memory ids, and source turn ids visible for follow-up work.
 
-`vulcan_memory_search` and `vulcan_memory_get` remain available for grouped VMM-style inspection when you want raw hit grouping, memory ids, or source turn ids.
+`memory_search` and `memory_get` remain available only as optional bridge tools for host paths that still require the standard OpenClaw names. Use your OpenClaw agent tool policy when you want to hide or disable that bridge pair in one specific workflow instead of relying on one installer-written global deny rule.
 
 `before_prompt_build` now uses a split injection strategy:
 
@@ -225,6 +225,8 @@ Lifecycle commands intentionally stay as commands, not model tools. They can cha
 When `autoPostAction` is enabled, `vulcan-memory` now applies a conservative closed-turn gate. Interrupted turns, approval-gated replies, follow-up asks, and plan-only responses are skipped so VMM only receives stable `user -> assistant` turn pairs.
 
 The plugin now also registers `session_start` and `session_end` so profile cache and short-lived recall state are initialized and cleared along with the OpenClaw session lifecycle.
+
+When the Vulcan gRPC endpoint goes offline, the plugin keeps its stable tool surface registered, skips live hook work for that outage window, injects one temporary user-facing notice through `before_prompt_build`, and retries the endpoint in the background until connectivity resumes.
 
 ## vulcan-host Notes
 

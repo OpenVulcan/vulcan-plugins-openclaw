@@ -2,9 +2,13 @@
 // 本文件实现 OpenClaw 内的 Vulcan 工具管理命令。
 
 import {
+  buildVulcanCapabilityUnavailableMessage,
   buildCommandHostContext,
   createVulcanHostClient,
   describeClientTarget,
+  ensureVulcanHostReconnectScheduled,
+  isVulcanHostConnectionUnavailable,
+  isVulcanHostTransportError,
   type ResolvedVulcanConfig,
   type VulcanToolDescriptor,
 } from "@vulcan-plugins-openclaw/shared";
@@ -26,6 +30,10 @@ type VulcanCommandAction =
   | "uninstall"
   | "reload"
   | "help";
+
+// HOST_UNAVAILABLE_MESSAGE keeps one stable command-facing message when vulcan-host is currently offline.
+// HOST_UNAVAILABLE_MESSAGE 为 vulcan-host 当前离线时保留一条稳定的命令面消息。
+const HOST_UNAVAILABLE_MESSAGE = buildVulcanCapabilityUnavailableMessage("host");
 
 // registerVulcanCommands registers operator-facing commands instead of exposing lifecycle as tools.
 // registerVulcanCommands 注册面向操作者的命令，而不是把生命周期操作暴露成工具。
@@ -53,6 +61,10 @@ async function handleVulcanCommand(
   const action = normalizeAction(tokens[0]);
   const client = createVulcanHostClient(config);
   const context = buildCommandHostContext(ctx, config);
+  if (isVulcanHostConnectionUnavailable(config) && action !== "help") {
+    ensureVulcanHostReconnectScheduled(config, { logger: api.logger });
+    return { text: `${HOST_UNAVAILABLE_MESSAGE}\n\n当前目标：${describeClientTarget(config)}` };
+  }
   try {
     if (action === "status") {
       const [health, vmm] = await Promise.all([client.health(context), client.getVmmStatus(context)]);
@@ -103,6 +115,10 @@ async function handleVulcanCommand(
     return { text: buildUsage() };
   } catch (error) {
     api.logger.warn?.(`vulcan-tools: command failed: ${String(error)}`);
+    if (isVulcanHostTransportError(error)) {
+      ensureVulcanHostReconnectScheduled(config, { logger: api.logger, force: true });
+      return { text: `${HOST_UNAVAILABLE_MESSAGE}\n\n当前目标：${describeClientTarget(config)}` };
+    }
     return { text: `Vulcan command failed: ${error instanceof Error ? error.message : String(error)}` };
   }
 }

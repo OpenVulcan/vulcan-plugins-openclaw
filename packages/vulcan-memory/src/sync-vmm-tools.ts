@@ -18,26 +18,18 @@ import {
 // GENERATED_EXPORT_NAME 是记忆兼容工具与绑定管理包装器共同消费的稳定导出名。
 const GENERATED_EXPORT_NAME = "GENERATED_VMM_TOOLS";
 
-// STABLE_MEMORY_TOOL_NAMES keeps the canonical plus compatibility memory registrations that always exist in contracts.tools.
-// STABLE_MEMORY_TOOL_NAMES 保留始终存在于 contracts.tools 中的 canonical 与兼容记忆工具名。
-const STABLE_MEMORY_TOOL_NAMES = [
-  "memory_search",
-  "memory_get",
+// FALLBACK_MEMORY_TOOL_NAMES keeps one bootstrap memory manifest set whose order already prefers explicit Vulcan tools over legacy bridges.
+// FALLBACK_MEMORY_TOOL_NAMES 保留一套引导期记忆 manifest 工具名，并在顺序上优先显式 Vulcan 工具而不是旧式桥接工具。
+const FALLBACK_MEMORY_TOOL_NAMES = [
   "vulcan_memory_search",
   "vulcan_memory_get",
- ] as const;
-
-// FALLBACK_BINDING_TOOL_NAMES keeps one bootstrap binding/admin manifest set for older vulcan-host runtimes that cannot return tool_group metadata yet.
-// FALLBACK_BINDING_TOOL_NAMES 为尚不能返回 tool_group 元数据的旧版 vulcan-host 保留一套引导期绑定/管理工具名。
-const FALLBACK_BINDING_TOOL_NAMES = [
-  "vulcan_vmm_get_bindings",
-  "vulcan_vmm_list_users",
-  "vulcan_vmm_bind_default_user",
-  "vulcan_vmm_list_projects",
-  "vulcan_vmm_bind_default_project",
-  "vulcan_vmm_bind_agent_project",
-  "vulcan_vmm_clear_agent_project",
+  "memory_search",
+  "memory_get",
 ] as const;
+
+// FALLBACK_BINDING_TOOL_NAMES keeps one bootstrap compact binding/admin tool name for older vulcan-host runtimes.
+// FALLBACK_BINDING_TOOL_NAMES 为旧版 vulcan-host 保留一个引导期精简绑定/管理工具名。
+const FALLBACK_BINDING_TOOL_NAMES = ["vulcan_bind"] as const;
 
 // main fetches VMM memory plus binding/admin descriptors from vulcan-host and writes the generated module.
 // main 从 vulcan-host 获取 VMM 记忆与绑定管理工具描述，并写入生成模块。
@@ -51,6 +43,7 @@ async function main(): Promise<void> {
   const descriptors = normalizeGeneratedDescriptors(
     [...memoryDescriptors, ...bindingDescriptors],
   );
+  const memoryToolNames = listGeneratedMemoryToolNames(descriptors);
   const bindingToolNames = listGeneratedBindingToolNames(descriptors);
   const generatedPath = path.join(root, "src", "generated", "vmm-tools.generated.ts");
   const manifestPath = path.join(root, "openclaw.plugin.json");
@@ -63,15 +56,35 @@ async function main(): Promise<void> {
   );
   const toolNames = await updateManifestTools({
     manifestPath,
-    baseToolNames: [...STABLE_MEMORY_TOOL_NAMES],
+    baseToolNames: memoryToolNames,
     generatedToolNames: bindingToolNames,
   });
 
-  // Memory keeps stable canonical memory names locally, while binding/admin names now prefer the synchronized host tool group.
-  // 记忆插件在本地保持稳定 canonical 记忆工具名，同时让绑定/管理工具名优先取同步下来的宿主工具组。
+  // Memory and binding/admin manifest names now prefer synchronized descriptor annotations, with local lists kept only as bootstrap fallback.
+  // 记忆与绑定/管理 manifest 工具名现在优先使用同步 descriptor 注解，本地列表仅保留为引导期回退。
   console.log(`Synced ${descriptors.length} VMM descriptors into ${generatedPath}.`);
   console.log(`Updated ${manifestPath} contracts.tools (${toolNames.length} total).`);
   console.log("Next: restart/reload the Gateway if OpenClaw keeps old memory tool descriptions.");
+}
+
+// listGeneratedMemoryToolNames extracts explicit Vulcan tools first and leaves canonical bridges after them so host manifests prefer the Vulcan-native surface.
+// listGeneratedMemoryToolNames 先提取显式 Vulcan 工具，再附加 canonical 桥接工具，让宿主 manifest 优先选择 Vulcan 原生表面。
+function listGeneratedMemoryToolNames(descriptors: VulcanToolDescriptor[]): string[] {
+  const primaryNames = descriptors
+    .filter((descriptor) => readToolGroup(descriptor) === "vmm-memory")
+    .filter((descriptor) => readVisibility(descriptor) !== "advanced")
+    .filter((descriptor) => {
+      const surface = readRegistrationSurface(descriptor);
+      return surface === "host-memory-compat";
+    })
+    .map((descriptor) => descriptor.name);
+  const bridgeNames = descriptors
+    .filter((descriptor) => readToolGroup(descriptor) === "vmm-memory")
+    .filter((descriptor) => readVisibility(descriptor) !== "advanced")
+    .filter((descriptor) => readRegistrationSurface(descriptor) === "host-memory-canonical")
+    .map((descriptor) => descriptor.name);
+  const names = [...primaryNames, ...bridgeNames];
+  return names.length > 0 ? names : [...FALLBACK_MEMORY_TOOL_NAMES];
 }
 
 // listOptionalBindingDescriptors keeps sync usable against older vulcan-host runtimes that have not restarted onto the new binding-descriptor RPC yet.
@@ -94,11 +107,16 @@ async function listOptionalBindingDescriptors(
   }
 }
 
-// listGeneratedBindingToolNames extracts binding/admin tool names from synchronized descriptors and falls back to one bootstrap list when metadata is unavailable.
-// listGeneratedBindingToolNames 从同步 descriptor 中提取绑定/管理工具名，并在元数据不可用时回退到引导期固定列表。
+// listGeneratedBindingToolNames extracts the compact binding/admin tool from synchronized descriptors and falls back to one bootstrap name when metadata is unavailable.
+// listGeneratedBindingToolNames 从同步 descriptor 中提取精简绑定/管理工具名，并在元数据不可用时回退到引导期固定名称。
 function listGeneratedBindingToolNames(descriptors: VulcanToolDescriptor[]): string[] {
   const names = descriptors
     .filter((descriptor) => readToolGroup(descriptor) === "vmm-binding")
+    .filter((descriptor) => {
+      const visibility = readVisibility(descriptor);
+      return visibility === undefined || visibility === "admin";
+    })
+    .filter((descriptor) => readRegistrationSurface(descriptor) === "host-binding-consolidated")
     .map((descriptor) => descriptor.name);
   return names.length > 0 ? names : [...FALLBACK_BINDING_TOOL_NAMES];
 }
@@ -107,6 +125,20 @@ function listGeneratedBindingToolNames(descriptors: VulcanToolDescriptor[]): str
 // readToolGroup 只保留非空的 tool_group 注解，让 manifest 同步能够区分绑定/管理 descriptor 与记忆 descriptor。
 function readToolGroup(descriptor: VulcanToolDescriptor): string | undefined {
   const value = descriptor.annotations?.tool_group;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+// readRegistrationSurface keeps only non-empty registration-surface annotations so hosts can derive the intended manifest surface without hard-coded tool ids.
+// readRegistrationSurface 只保留非空注册面注解，让宿主无需硬编码工具标识也能推导目标 manifest 表面。
+function readRegistrationSurface(descriptor: VulcanToolDescriptor): string | undefined {
+  const value = descriptor.annotations?.registration_surface;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+// readVisibility keeps only non-empty visibility annotations so host manifest sync can distinguish public, advanced, and admin descriptor surfaces generically.
+// readVisibility 只保留非空可见性注解，让宿主 manifest 同步能够通用地区分 public、advanced 与 admin 描述面。
+function readVisibility(descriptor: VulcanToolDescriptor): string | undefined {
+  const value = descriptor.annotations?.visibility;
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 

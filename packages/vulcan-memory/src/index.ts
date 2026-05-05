@@ -32,22 +32,24 @@ export default definePluginEntry({
     // 先注册原生 memory capability，让 OpenClaw 把这个包视为当前 memory slot 的拥有者。
     api.registerMemoryCapability(createVulcanMemoryCapability(api, config));
 
-    // Register canonical memory tools so the active memory slot exposes the standard OpenClaw memory_search/memory_get surface.
-    // 注册 canonical memory 工具，让当前 memory slot 暴露标准的 OpenClaw memory_search/memory_get 接口。
-    api.registerTool((ctx) => createMemorySearchTool({ api, config, ctx }), {
-      name: "memory_search",
-    });
-    api.registerTool((ctx) => createMemoryGetTool({ api, config, ctx }), {
-      name: "memory_get",
-    });
-
-    // Keep the grouped Vulcan compatibility tools for raw VMM-style inspection and operator workflows.
-    // 保留分组式 Vulcan 兼容工具，供原始 VMM 风格排查与操作流程使用。
+    // Register the explicit Vulcan memory tools first so model-facing memory flows prefer the native Vulcan surface.
+    // 先注册显式 Vulcan 记忆工具，让面向模型的记忆流程优先使用原生 Vulcan 表面。
     api.registerTool((ctx) => createVulcanMemorySearchTool({ api, config, ctx }), {
       name: "vulcan_memory_search",
     });
     api.registerTool((ctx) => createVulcanMemoryGetTool({ api, config, ctx }), {
       name: "vulcan_memory_get",
+    });
+
+    // Keep canonical OpenClaw memory_search/memory_get only as optional bridge tools for hosts or workflows that still need the standard names.
+    // 仅将 canonical OpenClaw memory_search/memory_get 保留为可选桥接工具，供仍依赖标准名称的宿主或流程使用。
+    api.registerTool((ctx) => createMemorySearchTool({ api, config, ctx }), {
+      name: "memory_search",
+      optional: true,
+    });
+    api.registerTool((ctx) => createMemoryGetTool({ api, config, ctx }), {
+      name: "memory_get",
+      optional: true,
     });
 
     // Register binding-management tools through one stable registry so no-TUI hosts can reuse the same tool-contract shell.

@@ -2,12 +2,17 @@
 // 本文件负责为没有原生 TUI 的宿主提供绑定管理工具，例如 OpenClaw。
 
 import {
+  buildVulcanCapabilityUnavailableMessage,
   buildToolHostContext,
   clearPersistedAgentProjectId,
   createVulcanHostClient,
+  ensureVulcanHostReconnectScheduled,
   errorToolResult,
+  isVulcanHostConnectionUnavailable,
+  isVulcanHostTransportError,
   jsonToolResult,
   loadPersistedVulcanBindingState,
+  peekVulcanHostConnectionSnapshot,
   resolveEffectiveVulcanBindings,
   setPersistedAgentProjectId,
   setPersistedDefaultProjectId,
@@ -19,58 +24,63 @@ import {
   type VulcanHostContext,
   type VulcanToolDescriptor,
   type VulcanVmmResolvedProject,
-  type VulcanVmmResolvedUser,
 } from "@vulcan-plugins-openclaw/shared";
 import type {
-  AnyAgentTool,
   AgentToolResult,
+  AnyAgentTool,
   OpenClawPluginApi,
   OpenClawPluginToolContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { GENERATED_VMM_TOOLS } from "./generated/vmm-tools.generated.js";
 
-// BindingToolParams groups the shared dependencies required by every binding-management tool.
-// BindingToolParams 汇总每个绑定管理工具都会用到的共享依赖。
+// BindingToolParams groups the shared dependencies required by the consolidated binding tool.
+// BindingToolParams 汇总聚合绑定工具所需的共享依赖。
 interface BindingToolParams {
   api: OpenClawPluginApi;
   config: ResolvedVulcanConfig;
   ctx: OpenClawPluginToolContext;
 }
 
-// BindingToolExecutionMode declares whether one binding/admin tool is local-only, remote-only, or hybrid.
-// BindingToolExecutionMode 声明一条绑定/管理工具是纯本地、纯远端还是混合执行。
+// BindingToolExecutionMode declares whether the host should expect local-only, remote-only, or hybrid execution.
+// BindingToolExecutionMode 声明宿主应预期本地、远端还是混合执行模式。
 type BindingToolExecutionMode = "local" | "remote" | "hybrid";
 
-// BindingToolName enumerates the binding/admin tools whose descriptors are synchronized from vulcan-host.
-// BindingToolName 枚举从 vulcan-host 同步描述的绑定与管理工具名称。
-export type BindingToolName =
-  | "vulcan_vmm_get_bindings"
-  | "vulcan_vmm_list_users"
-  | "vulcan_vmm_bind_default_user"
-  | "vulcan_vmm_list_projects"
-  | "vulcan_vmm_bind_default_project"
-  | "vulcan_vmm_bind_agent_project"
-  | "vulcan_vmm_clear_agent_project";
+// BindingToolName keeps one stable compact tool id for no-TUI hosts.
+// BindingToolName 为无 TUI 宿主保留一个稳定的精简工具标识。
+export type BindingToolName = "vulcan_bind";
 
-// BindingToolDefinition keeps one descriptor-driven tool contract and its host-local execution body together.
-// BindingToolDefinition 把一条 descriptor 驱动的工具契约与其宿主本地执行主体放在一起维护。
-interface BindingToolDefinition {
-  name: BindingToolName;
-  label: string;
-  fallbackDescription: string;
-  fallbackSchema: Record<string, unknown>;
-  execute: (context: BindingToolExecutionContext, rawParams: unknown) => Promise<AgentToolResult>;
+// BindAction enumerates the high-level operations supported by the compact binding surface.
+// BindAction 枚举精简绑定表面支持的高层操作。
+type BindAction = "inspect" | "list" | "bind" | "clear";
+
+// BindResource enumerates the durable entities that the compact binding surface can inspect or mutate.
+// BindResource 枚举精简绑定表面可查看或修改的长期实体。
+type BindResource = "bindings" | "user" | "project";
+
+// BindScope distinguishes shared default bindings from one main-agent project override.
+// BindScope 区分共享默认绑定与单个主 agent 的项目覆盖。
+type BindScope = "global" | "agent";
+
+// BindCommandInput captures one validated compact binding command after loose tool input has been normalized.
+// BindCommandInput 保存宽松工具输入在归一化后的单条精简绑定命令。
+interface BindCommandInput {
+  action: BindAction;
+  resource: BindResource;
+  scope?: BindScope | undefined;
+  ref?: string | undefined;
+  agentId?: string | undefined;
+  createIfMissing: boolean;
 }
 
-// BindingToolRemoteRuntime reuses one lazily built host client/context pair for tools that must talk to vulcan-host.
-// BindingToolRemoteRuntime 复用一份按需构造的 host client/context 对，用于必须访问 vulcan-host 的工具。
+// BindingToolRemoteRuntime reuses one lazily built host client/context pair for tool branches that must talk to vulcan-host.
+// BindingToolRemoteRuntime 复用一份按需构造的 host client/context 对，用于必须访问 vulcan-host 的分支。
 interface BindingToolRemoteRuntime {
   client: VulcanHostClient;
   context: VulcanHostContext;
 }
 
-// BindingToolExecutionContext combines host-local dependencies with the synchronized descriptor contract used by one tool execution.
-// BindingToolExecutionContext 组合单次工具执行所需的宿主本地依赖与同步 descriptor 契约。
+// BindingToolExecutionContext combines host-local dependencies with the synchronized descriptor contract used by the compact tool.
+// BindingToolExecutionContext 组合精简工具执行所需的宿主本地依赖与同步 descriptor 契约。
 interface BindingToolExecutionContext {
   params: BindingToolParams;
   descriptor: VulcanToolDescriptor;
@@ -78,360 +88,85 @@ interface BindingToolExecutionContext {
   getRemoteRuntime: () => BindingToolRemoteRuntime;
 }
 
-// VULCAN_BINDING_TOOL_NAMES preserves one stable registration order shared by sync, runtime, and later host adapters.
-// VULCAN_BINDING_TOOL_NAMES 保留一份稳定注册顺序，供同步、运行时与后续宿主适配层共同使用。
-const VULCAN_BINDING_TOOL_NAMES: BindingToolName[] = [
-  "vulcan_vmm_get_bindings",
-  "vulcan_vmm_list_users",
-  "vulcan_vmm_bind_default_user",
-  "vulcan_vmm_list_projects",
-  "vulcan_vmm_bind_default_project",
-  "vulcan_vmm_bind_agent_project",
-  "vulcan_vmm_clear_agent_project",
-];
+// VULCAN_BIND_TOOL_NAME is the single compact tool id exposed to OpenClaw after binding-tool consolidation.
+// VULCAN_BIND_TOOL_NAME 是绑定工具合并后对 OpenClaw 暴露的单一精简工具标识。
+const VULCAN_BIND_TOOL_NAME: BindingToolName = "vulcan_bind";
 
-// VmmBindingGetSchema keeps the bindings inspection tool simple while still allowing explicit agent-target inspection.
-// VmmBindingGetSchema 保持绑定查看工具的输入足够简单，同时允许显式查看指定 agent 的目标绑定。
-const VmmBindingGetSchema = {
+// VULCAN_BINDING_TOOL_GROUP keeps descriptor filtering aligned with the grpc-side contract.
+// VULCAN_BINDING_TOOL_GROUP 保持 descriptor 过滤与 grpc 侧契约一致。
+const VULCAN_BINDING_TOOL_GROUP = "vmm-binding";
+
+// VULCAN_BINDING_TOOL_VISIBILITY keeps registration limited to admin-style binding controls.
+// VULCAN_BINDING_TOOL_VISIBILITY 将注册范围限制在管理型绑定控制面。
+const VULCAN_BINDING_TOOL_VISIBILITY = "admin";
+
+// VULCAN_BINDING_CONSOLIDATED_SURFACE selects the compact host-facing descriptor instead of the legacy per-action tools.
+// VULCAN_BINDING_CONSOLIDATED_SURFACE 选择精简宿主 descriptor，而不是旧的逐动作工具。
+const VULCAN_BINDING_CONSOLIDATED_SURFACE = "host-binding-consolidated";
+
+// VulcanBindSchema keeps the local fallback contract aligned with the grpc-side compact descriptor.
+// VulcanBindSchema 让本地回退契约与 grpc 侧的精简 descriptor 保持一致。
+const VulcanBindSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
+    action: {
+      type: "string",
+      enum: ["inspect", "list", "bind", "clear"],
+      description:
+        "Binding operation. inspect returns the current effective binding state, list returns durable VMM identities, bind persists one host binding target, and clear removes one per-agent project override.",
+    },
+    resource: {
+      type: "string",
+      enum: ["bindings", "user", "project"],
+      description:
+        "Binding resource. Use bindings with inspect, user or project with list/bind, and project with clear.",
+    },
+    scope: {
+      type: "string",
+      enum: ["global", "agent"],
+      description:
+        "Binding scope. global updates the shared default host binding, while agent updates or clears one main-agent project override.",
+    },
+    ref: {
+      type: "string",
+      description:
+        "Existing numeric user_id/project_id, durable user name, or canonical Team/Space/Project path depending on the selected resource.",
+    },
     agentId: {
       type: "string",
       description:
-        "Optional OpenClaw agent id to inspect. Omit to inspect the current main agent when one is available.",
-    },
-  },
-} as const;
-
-// VmmListUsersSchema intentionally stays empty because the backend already returns the full durable user list.
-// VmmListUsersSchema 故意保持为空，因为后端已经会返回完整的长期用户列表。
-const VmmListUsersSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {},
-} as const;
-
-// VmmBindDefaultUserSchema accepts either an existing numeric user id or a durable user name and can create missing users when requested.
-// VmmBindDefaultUserSchema 接受现有数字用户 ID 或长期用户名，并可在需要时创建缺失用户。
-const VmmBindDefaultUserSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    userRef: {
-      type: "string",
-      description:
-        "Existing numeric user id or durable user name. When createIfMissing=true and the name does not exist, VMM will create it.",
-    },
-    createIfMissing: {
-      type: "boolean",
-      description: "Whether the tool may create the user when userRef is a missing name.",
-    },
-  },
-  required: ["userRef"],
-} as const;
-
-// VmmListProjectsSchema intentionally stays empty because the backend already returns the full canonical Team/Space/Project list.
-// VmmListProjectsSchema 故意保持为空，因为后端已经会返回完整的标准 Team/Space/Project 列表。
-const VmmListProjectsSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {},
-} as const;
-
-// VmmBindProjectSchema accepts either an existing numeric project id or one canonical Team/Space/Project path for default binding.
-// VmmBindProjectSchema 接受现有数字项目 ID，或用于默认绑定的一条标准 Team/Space/Project 路径。
-const VmmBindProjectSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    projectRef: {
-      type: "string",
-      description:
-        "Existing numeric project id or canonical Team/Space/Project path. Creation requires a canonical path.",
+        "Optional host main-agent id. Omit to reuse the current trusted main-agent context when the host provides one.",
     },
     createIfMissing: {
       type: "boolean",
       description:
-        "Whether the tool may create the project when projectRef is a missing canonical Team/Space/Project path.",
+        "Whether the host may ask VMM to create a missing durable user name or canonical Team/Space/Project path while binding.",
     },
   },
-  required: ["projectRef"],
+  required: ["action", "resource"],
 } as const;
 
-// VmmBindAgentProjectSchema allows one main OpenClaw agent to override the shared default project binding.
-// VmmBindAgentProjectSchema 允许某个 OpenClaw 主 agent 覆盖共享默认项目绑定。
-const VmmBindAgentProjectSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    agentId: {
-      type: "string",
-      description:
-        "Optional target OpenClaw agent id. Omit to use the current main agent id from trusted tool context.",
-    },
-    projectRef: {
-      type: "string",
-      description:
-        "Existing numeric project id or canonical Team/Space/Project path. Creation requires a canonical path.",
-    },
-    createIfMissing: {
-      type: "boolean",
-      description:
-        "Whether the tool may create the project when projectRef is a missing canonical Team/Space/Project path.",
-    },
-  },
-  required: ["projectRef"],
-} as const;
+// VULCAN_BIND_FALLBACK_DESCRIPTION explains the compact binding surface when the grpc descriptor has not been synchronized yet.
+// VULCAN_BIND_FALLBACK_DESCRIPTION 说明在 grpc descriptor 尚未同步时的精简绑定表面。
+const VULCAN_BIND_FALLBACK_DESCRIPTION =
+  "Inspect, list, bind, or clear host-level VMM user/project bindings through one compact management surface. Use this when the host does not have an OpenCode-style TUI and you still need to choose a shared default user_id/project_id, inspect the active binding state, or assign one main agent to a dedicated project.";
 
-// VmmClearAgentProjectSchema clears one agent-specific override so the runtime falls back to the shared default project.
-// VmmClearAgentProjectSchema 清除单个 agent 的项目覆盖，让运行时回退到共享默认项目。
-const VmmClearAgentProjectSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    agentId: {
-      type: "string",
-      description:
-        "Optional target OpenClaw agent id. Omit to clear the current main agent id from trusted tool context.",
-    },
-  },
-} as const;
+// BINDING_UNAVAILABLE_MESSAGE keeps one stable unavailable text for compact binding operations that require a live vulcan-host connection.
+// BINDING_UNAVAILABLE_MESSAGE 为需要实时 vulcan-host 连接的精简绑定操作保留一条稳定的不可用提示文本。
+const BINDING_UNAVAILABLE_MESSAGE = buildVulcanCapabilityUnavailableMessage("binding");
 
-// VULCAN_BINDING_TOOL_DEFINITIONS centralizes host-local execution for every binding/admin tool while descriptors stay host-synchronized.
-// VULCAN_BINDING_TOOL_DEFINITIONS 在保持 descriptor 由宿主同步的同时，统一维护每个绑定/管理工具的宿主本地执行逻辑。
-const VULCAN_BINDING_TOOL_DEFINITIONS: Record<BindingToolName, BindingToolDefinition> = {
-  vulcan_vmm_get_bindings: {
-    name: "vulcan_vmm_get_bindings",
-    label: "Vulcan VMM Bindings",
-    fallbackDescription:
-      "Inspect the effective Vulcan Memory Mesh user/project bindings used by OpenClaw, including default bindings and any per-agent project override.",
-    fallbackSchema: VmmBindingGetSchema,
-    async execute(context, rawParams) {
-      const { params } = context;
-      const input = asRecord(rawParams);
-      const targetAgentId = readOptionalString(input.agentId) ?? params.ctx.agentId;
-      const effective = await resolveEffectiveVulcanBindings(params.config, targetAgentId);
-      const persisted = await loadPersistedVulcanBindingState();
-      return jsonToolResult(
-        {
-          storePath: effective.storePath,
-          currentAgentId: targetAgentId ?? "",
-          configuredDefaultUserId: params.config.bindings.defaultUserId,
-          configuredDefaultProjectId: params.config.bindings.defaultProjectId,
-          defaultUserId: effective.defaultUserId,
-          defaultProjectId: effective.defaultProjectId,
-          effectiveUserId: effective.effectiveUserId,
-          effectiveProjectId: effective.effectiveProjectId,
-          agentProjectId: effective.agentProjectId ?? "",
-          projectSource: effective.projectSource,
-          configuredAgentProjects: params.config.bindings.agentProjects,
-          persistedAgentProjects: persisted.agentProjects,
-        } as JsonValue,
-        {
-          effective,
-          persisted,
-        },
-      );
-    },
-  },
-  vulcan_vmm_list_users: {
-    name: "vulcan_vmm_list_users",
-    label: "Vulcan VMM Users",
-    fallbackDescription:
-      "List durable VMM users so you can choose one real user id for default OpenClaw binding.",
-    fallbackSchema: VmmListUsersSchema,
-    async execute(context) {
-      const runtime = context.getRemoteRuntime();
-      const response = await runtime.client.listVmmUsers(runtime.context);
-      return jsonToolResult(
-        {
-          total: response.users.length,
-          users: response.users,
-          traceId: response.traceId ?? "",
-        } as unknown as JsonValue,
-        response,
-      );
-    },
-  },
-  vulcan_vmm_bind_default_user: {
-    name: "vulcan_vmm_bind_default_user",
-    label: "Vulcan Bind Default User",
-    fallbackDescription:
-      "Resolve or create one VMM user, then persist its real numeric user id as the shared default OpenClaw binding.",
-    fallbackSchema: VmmBindDefaultUserSchema,
-    async execute(context, rawParams) {
-      const { params } = context;
-      const input = readBindDefaultUserParams(rawParams);
-      if (!input) {
-        return errorToolResult("userRef must be a non-empty string.");
-      }
-      const runtime = context.getRemoteRuntime();
-      const user = await runtime.client.resolveVmmUser({
-        context: runtime.context,
-        userRef: input.userRef,
-        confirmCreate: input.createIfMissing,
-      });
-      if (!user.userId.trim()) {
-        return errorToolResult(
-          user.message.trim() || `Failed to resolve VMM user from ${JSON.stringify(input.userRef)}.`,
-          { user },
-        );
-      }
-      await setPersistedDefaultUserId(user.userId);
-      const effective = await resolveEffectiveVulcanBindings(params.config, params.ctx.agentId);
-      return jsonToolResult(
-        {
-          action: "bind-default-user",
-          user,
-          defaultUserId: effective.defaultUserId,
-          effectiveUserId: effective.effectiveUserId,
-          storePath: effective.storePath,
-        } as unknown as JsonValue,
-        {
-          effective,
-          user,
-        },
-      );
-    },
-  },
-  vulcan_vmm_list_projects: {
-    name: "vulcan_vmm_list_projects",
-    label: "Vulcan VMM Projects",
-    fallbackDescription:
-      "List durable VMM Team/Space/Project entries so you can choose one real project id or canonical path for OpenClaw binding.",
-    fallbackSchema: VmmListProjectsSchema,
-    async execute(context) {
-      const runtime = context.getRemoteRuntime();
-      const response = await runtime.client.listVmmProjects(runtime.context);
-      return jsonToolResult(
-        {
-          total: response.projects.length,
-          projects: response.projects,
-          traceId: response.traceId ?? "",
-        } as unknown as JsonValue,
-        response,
-      );
-    },
-  },
-  vulcan_vmm_bind_default_project: {
-    name: "vulcan_vmm_bind_default_project",
-    label: "Vulcan Bind Default Project",
-    fallbackDescription:
-      "Resolve or create one VMM project, then persist its real numeric project id as the shared default OpenClaw project binding.",
-    fallbackSchema: VmmBindProjectSchema,
-    async execute(context, rawParams) {
-      const { params } = context;
-      const input = readBindProjectParams(rawParams);
-      if (!input) {
-        return errorToolResult("projectRef must be a non-empty string.");
-      }
-      const runtime = context.getRemoteRuntime();
-      const project = await resolveProjectBindingTarget(
-        runtime.client,
-        runtime.context,
-        input.projectRef,
-        input.createIfMissing,
-      );
-      await setPersistedDefaultProjectId(project.projectId);
-      const effective = await resolveEffectiveVulcanBindings(params.config, params.ctx.agentId);
-      return jsonToolResult(
-        {
-          action: "bind-default-project",
-          project,
-          defaultProjectId: effective.defaultProjectId,
-          effectiveProjectId: effective.effectiveProjectId,
-          storePath: effective.storePath,
-        } as unknown as JsonValue,
-        {
-          effective,
-          project,
-        },
-      );
-    },
-  },
-  vulcan_vmm_bind_agent_project: {
-    name: "vulcan_vmm_bind_agent_project",
-    label: "Vulcan Bind Agent Project",
-    fallbackDescription:
-      "Bind one OpenClaw main agent to a dedicated VMM project id. Omit agentId to bind the current trusted agent.",
-    fallbackSchema: VmmBindAgentProjectSchema,
-    async execute(context, rawParams) {
-      const { params } = context;
-      const input = readBindAgentProjectParams(rawParams);
-      if (!input) {
-        return errorToolResult("projectRef must be a non-empty string.");
-      }
-      const targetAgentId = resolveTargetAgentId(input.agentId, params.ctx.agentId);
-      const runtime = context.getRemoteRuntime();
-      const project = await resolveProjectBindingTarget(
-        runtime.client,
-        runtime.context,
-        input.projectRef,
-        input.createIfMissing,
-      );
-      await setPersistedAgentProjectId(targetAgentId, project.projectId);
-      const effective = await resolveEffectiveVulcanBindings(params.config, targetAgentId);
-      return jsonToolResult(
-        {
-          action: "bind-agent-project",
-          agentId: targetAgentId,
-          project,
-          effectiveProjectId: effective.effectiveProjectId,
-          projectSource: effective.projectSource,
-          storePath: effective.storePath,
-        } as unknown as JsonValue,
-        {
-          effective,
-          project,
-        },
-      );
-    },
-  },
-  vulcan_vmm_clear_agent_project: {
-    name: "vulcan_vmm_clear_agent_project",
-    label: "Vulcan Clear Agent Project",
-    fallbackDescription:
-      "Clear one agent-specific VMM project override so the runtime falls back to the shared default project binding.",
-    fallbackSchema: VmmClearAgentProjectSchema,
-    async execute(context, rawParams) {
-      const { params } = context;
-      const input = asRecord(rawParams);
-      const targetAgentId = resolveTargetAgentId(readOptionalString(input.agentId), params.ctx.agentId);
-      await clearPersistedAgentProjectId(targetAgentId);
-      const effective = await resolveEffectiveVulcanBindings(params.config, targetAgentId);
-      return jsonToolResult(
-        {
-          action: "clear-agent-project",
-          agentId: targetAgentId,
-          effectiveProjectId: effective.effectiveProjectId,
-          projectSource: effective.projectSource,
-          defaultProjectId: effective.defaultProjectId,
-          storePath: effective.storePath,
-        } as JsonValue,
-        { effective },
-      );
-    },
-  },
-};
-
-// listVulcanBindingToolNames exposes the stable binding/admin registration order to plugin entrypoints.
-// listVulcanBindingToolNames 向插件入口暴露稳定的绑定/管理工具注册顺序。
+// listVulcanBindingToolNames exposes the compact binding tool name, preferring the synchronized consolidated descriptor when available.
+// listVulcanBindingToolNames 暴露精简绑定工具名称，并在可用时优先采用同步下来的聚合 descriptor。
 export function listVulcanBindingToolNames(): BindingToolName[] {
   const generatedNames = listGeneratedBindingDescriptors()
     .map((descriptor) => descriptor.name)
     .filter(isBindingToolName);
-  const mergedNames = [...generatedNames];
-  for (const fallbackName of VULCAN_BINDING_TOOL_NAMES) {
-    if (!mergedNames.includes(fallbackName)) {
-      mergedNames.push(fallbackName);
-    }
-  }
-  return mergedNames;
+  return generatedNames.length > 0 ? generatedNames : [VULCAN_BIND_TOOL_NAME];
 }
 
-// createVulcanBindingTool builds one binding/admin tool from the shared registry, synced descriptors, and host-local execution body.
-// createVulcanBindingTool 通过共享注册表、同步 descriptor 与宿主本地执行逻辑构建单个绑定/管理工具。
+// createVulcanBindingTool builds the single compact binding tool from the synchronized descriptor plus host-local persistence logic.
+// createVulcanBindingTool 通过同步 descriptor 与宿主本地持久化逻辑构建单一精简绑定工具。
 export function createVulcanBindingTool(
   toolName: BindingToolName,
   params: BindingToolParams,
@@ -439,17 +174,16 @@ export function createVulcanBindingTool(
   if (!params.config.enabled || !params.config.memory.enabled) {
     return null;
   }
-  const definition = VULCAN_BINDING_TOOL_DEFINITIONS[toolName];
-  const descriptor = resolveBindingToolDescriptor(definition);
+  const descriptor = resolveBindingToolDescriptor(toolName);
   const executionMode = resolveBindingExecutionMode(descriptor);
   return {
-    name: definition.name,
-    label: definition.label,
+    name: toolName,
+    label: "Vulcan Bind",
     description: descriptor.description,
     parameters: descriptor.inputSchema,
     async execute(_toolCallId, rawParams) {
       try {
-        return await definition.execute(
+        return await executeVulcanBindTool(
           createBindingToolExecutionContext({
             params,
             descriptor,
@@ -458,53 +192,260 @@ export function createVulcanBindingTool(
           rawParams,
         );
       } catch (error) {
-        params.api.logger.warn?.(`vulcan-memory: ${definition.name} failed: ${String(error)}`);
+        params.api.logger.warn?.(`vulcan-memory: ${toolName} failed: ${String(error)}`);
+        if (isVulcanHostTransportError(error)) {
+          ensureVulcanHostReconnectScheduled(params.config, { logger: params.api.logger, force: true });
+          return errorToolResult(BINDING_UNAVAILABLE_MESSAGE);
+        }
         return errorToolResult(error instanceof Error ? error.message : String(error));
       }
     },
   };
 }
 
-// createVulcanBindingGetTool preserves the existing factory export while delegating to the registry-based builder.
-// createVulcanBindingGetTool 保留现有工厂导出，同时转交给基于注册表的构建器。
-export function createVulcanBindingGetTool(params: BindingToolParams): AnyAgentTool | null {
-  return createVulcanBindingTool("vulcan_vmm_get_bindings", params);
+// executeVulcanBindTool routes the compact command into one focused host-local or hybrid binding action.
+// executeVulcanBindTool 将精简命令路由到单个聚焦的宿主本地或混合绑定动作。
+async function executeVulcanBindTool(
+  context: BindingToolExecutionContext,
+  rawParams: unknown,
+): Promise<AgentToolResult> {
+  const input = readBindCommandInput(rawParams);
+  if (!input) {
+    return errorToolResult("action and resource must be valid non-empty strings.");
+  }
+
+  // Route read-only inspection first so hosts can always introspect active bindings before mutating them.
+  // 先路由只读查看分支，让宿主总能在修改前先检查当前绑定状态。
+  if (input.action === "inspect") {
+    return executeInspectBindings(context, input);
+  }
+
+  // Route durable identity listing second so operators can choose exact ids before binding.
+  // 接着路由长期实体列表分支，让操作者能先选定精确 ID 再进行绑定。
+  if (input.action === "list") {
+    return executeListCommand(context, input);
+  }
+
+  // Route binding mutations next, while keeping unsupported combinations explicit instead of guessing intent.
+  // 再路由绑定修改分支，并显式拒绝不受支持的组合，避免宿主擅自猜测意图。
+  if (input.action === "bind") {
+    return executeBindCommand(context, input);
+  }
+
+  // Route clear operations last because current OpenClaw binding state only supports clearing one per-agent project override.
+  // 最后路由清除操作，因为当前 OpenClaw 绑定状态只支持清除按 agent 的项目覆盖。
+  return executeClearCommand(context, input);
 }
 
-// createVulcanListUsersTool preserves the existing factory export while delegating to the registry-based builder.
-// createVulcanListUsersTool 保留现有工厂导出，同时转交给基于注册表的构建器。
-export function createVulcanListUsersTool(params: BindingToolParams): AnyAgentTool | null {
-  return createVulcanBindingTool("vulcan_vmm_list_users", params);
+// executeInspectBindings returns the effective binding state for the current or explicitly selected main agent.
+// executeInspectBindings 返回当前或显式选定主 agent 的有效绑定状态。
+async function executeInspectBindings(
+  context: BindingToolExecutionContext,
+  input: BindCommandInput,
+): Promise<AgentToolResult> {
+  if (input.resource !== "bindings") {
+    return errorToolResult("inspect currently supports only resource=bindings.");
+  }
+  const targetAgentId = input.agentId ?? context.params.ctx.agentId;
+  const effective = await resolveEffectiveVulcanBindings(context.params.config, targetAgentId);
+  const persisted = await loadPersistedVulcanBindingState();
+  return jsonToolResult(
+    {
+      action: "inspect",
+      resource: "bindings",
+      storePath: effective.storePath,
+      currentAgentId: targetAgentId ?? "",
+      configuredDefaultUserId: context.params.config.bindings.defaultUserId,
+      configuredDefaultProjectId: context.params.config.bindings.defaultProjectId,
+      defaultUserId: effective.defaultUserId,
+      defaultProjectId: effective.defaultProjectId,
+      effectiveUserId: effective.effectiveUserId,
+      effectiveProjectId: effective.effectiveProjectId,
+      agentProjectId: effective.agentProjectId ?? "",
+      projectSource: effective.projectSource,
+      configuredAgentProjects: context.params.config.bindings.agentProjects,
+      persistedAgentProjects: persisted.agentProjects,
+    } as JsonValue,
+    {
+      effective,
+      persisted,
+    },
+  );
 }
 
-// createVulcanBindDefaultUserTool preserves the existing factory export while delegating to the registry-based builder.
-// createVulcanBindDefaultUserTool 保留现有工厂导出，同时转交给基于注册表的构建器。
-export function createVulcanBindDefaultUserTool(params: BindingToolParams): AnyAgentTool | null {
-  return createVulcanBindingTool("vulcan_vmm_bind_default_user", params);
+// executeListCommand returns durable VMM users or projects so the caller can choose one exact binding target.
+// executeListCommand 返回长期 VMM 用户或项目列表，让调用方可以选择精确绑定目标。
+async function executeListCommand(
+  context: BindingToolExecutionContext,
+  input: BindCommandInput,
+): Promise<AgentToolResult> {
+  if (input.resource === "user") {
+    const runtime = context.getRemoteRuntime();
+    const response = await runtime.client.listVmmUsers(runtime.context);
+    return jsonToolResult(
+      {
+        action: "list",
+        resource: "user",
+        total: response.users.length,
+        users: response.users,
+        traceId: response.traceId ?? "",
+      } as unknown as JsonValue,
+      response,
+    );
+  }
+  if (input.resource === "project") {
+    const runtime = context.getRemoteRuntime();
+    const response = await runtime.client.listVmmProjects(runtime.context);
+    return jsonToolResult(
+      {
+        action: "list",
+        resource: "project",
+        total: response.projects.length,
+        projects: response.projects,
+        traceId: response.traceId ?? "",
+      } as unknown as JsonValue,
+      response,
+    );
+  }
+  return errorToolResult("list supports only resource=user or resource=project.");
 }
 
-// createVulcanListProjectsTool preserves the existing factory export while delegating to the registry-based builder.
-// createVulcanListProjectsTool 保留现有工厂导出，同时转交给基于注册表的构建器。
-export function createVulcanListProjectsTool(params: BindingToolParams): AnyAgentTool | null {
-  return createVulcanBindingTool("vulcan_vmm_list_projects", params);
+// executeBindCommand applies one shared-default or per-agent binding mutation after validating the compact command shape.
+// executeBindCommand 在校验精简命令形态后执行共享默认或按 agent 的绑定修改。
+async function executeBindCommand(
+  context: BindingToolExecutionContext,
+  input: BindCommandInput,
+): Promise<AgentToolResult> {
+  if (!input.ref) {
+    return errorToolResult("bind requires one non-empty ref.");
+  }
+
+  // Bind user only supports the shared default binding because current OpenClaw runtime does not keep per-agent user overrides.
+  // 用户绑定只支持共享默认绑定，因为当前 OpenClaw 运行时不维护按 agent 的用户覆盖。
+  if (input.resource === "user") {
+    if (input.scope === "agent") {
+      return errorToolResult("user binding does not support scope=agent. Use scope=global or omit scope.");
+    }
+    const runtime = context.getRemoteRuntime();
+    const user = await runtime.client.resolveVmmUser({
+      context: runtime.context,
+      userRef: input.ref,
+      confirmCreate: input.createIfMissing,
+    });
+    if (!user.userId.trim()) {
+      return errorToolResult(
+        user.message.trim() || `Failed to resolve VMM user from ${JSON.stringify(input.ref)}.`,
+        { user },
+      );
+    }
+    await setPersistedDefaultUserId(user.userId);
+    const effective = await resolveEffectiveVulcanBindings(
+      context.params.config,
+      context.params.ctx.agentId,
+    );
+    return jsonToolResult(
+      {
+        action: "bind",
+        resource: "user",
+        scope: "global",
+        user,
+        defaultUserId: effective.defaultUserId,
+        effectiveUserId: effective.effectiveUserId,
+        storePath: effective.storePath,
+      } as unknown as JsonValue,
+      {
+        effective,
+        user,
+      },
+    );
+  }
+
+  if (input.resource !== "project") {
+    return errorToolResult("bind supports only resource=user or resource=project.");
+  }
+
+  const runtime = context.getRemoteRuntime();
+  const project = await resolveProjectBindingTarget(
+    runtime.client,
+    runtime.context,
+    input.ref,
+    input.createIfMissing,
+  );
+
+  // Route project bindings by scope so one tool can cover both the shared default project and one per-agent override.
+  // 按 scope 路由项目绑定，让单个工具同时覆盖共享默认项目与按 agent 的项目覆盖。
+  if (input.scope === "agent") {
+    const targetAgentId = resolveTargetAgentId(input.agentId, context.params.ctx.agentId);
+    await setPersistedAgentProjectId(targetAgentId, project.projectId);
+    const effective = await resolveEffectiveVulcanBindings(context.params.config, targetAgentId);
+    return jsonToolResult(
+      {
+        action: "bind",
+        resource: "project",
+        scope: "agent",
+        agentId: targetAgentId,
+        project,
+        effectiveProjectId: effective.effectiveProjectId,
+        projectSource: effective.projectSource,
+        storePath: effective.storePath,
+      } as unknown as JsonValue,
+      {
+        effective,
+        project,
+      },
+    );
+  }
+
+  await setPersistedDefaultProjectId(project.projectId);
+  const effective = await resolveEffectiveVulcanBindings(
+    context.params.config,
+    context.params.ctx.agentId,
+  );
+  return jsonToolResult(
+    {
+      action: "bind",
+      resource: "project",
+      scope: "global",
+      project,
+      defaultProjectId: effective.defaultProjectId,
+      effectiveProjectId: effective.effectiveProjectId,
+      storePath: effective.storePath,
+    } as unknown as JsonValue,
+    {
+      effective,
+      project,
+    },
+  );
 }
 
-// createVulcanBindDefaultProjectTool preserves the existing factory export while delegating to the registry-based builder.
-// createVulcanBindDefaultProjectTool 保留现有工厂导出，同时转交给基于注册表的构建器。
-export function createVulcanBindDefaultProjectTool(params: BindingToolParams): AnyAgentTool | null {
-  return createVulcanBindingTool("vulcan_vmm_bind_default_project", params);
-}
-
-// createVulcanBindAgentProjectTool preserves the existing factory export while delegating to the registry-based builder.
-// createVulcanBindAgentProjectTool 保留现有工厂导出，同时转交给基于注册表的构建器。
-export function createVulcanBindAgentProjectTool(params: BindingToolParams): AnyAgentTool | null {
-  return createVulcanBindingTool("vulcan_vmm_bind_agent_project", params);
-}
-
-// createVulcanClearAgentProjectTool preserves the existing factory export while delegating to the registry-based builder.
-// createVulcanClearAgentProjectTool 保留现有工厂导出，同时转交给基于注册表的构建器。
-export function createVulcanClearAgentProjectTool(params: BindingToolParams): AnyAgentTool | null {
-  return createVulcanBindingTool("vulcan_vmm_clear_agent_project", params);
+// executeClearCommand clears one per-agent project override so that the runtime falls back to the shared default project again.
+// executeClearCommand 清除按 agent 的项目覆盖，让运行时重新回退到共享默认项目。
+async function executeClearCommand(
+  context: BindingToolExecutionContext,
+  input: BindCommandInput,
+): Promise<AgentToolResult> {
+  if (input.resource !== "project") {
+    return errorToolResult("clear currently supports only resource=project.");
+  }
+  if (input.scope !== "agent") {
+    return errorToolResult("clear currently supports only scope=agent for project overrides.");
+  }
+  const targetAgentId = resolveTargetAgentId(input.agentId, context.params.ctx.agentId);
+  await clearPersistedAgentProjectId(targetAgentId);
+  const effective = await resolveEffectiveVulcanBindings(context.params.config, targetAgentId);
+  return jsonToolResult(
+    {
+      action: "clear",
+      resource: "project",
+      scope: "agent",
+      agentId: targetAgentId,
+      effectiveProjectId: effective.effectiveProjectId,
+      projectSource: effective.projectSource,
+      defaultProjectId: effective.defaultProjectId,
+      storePath: effective.storePath,
+    } as JsonValue,
+    { effective },
+  );
 }
 
 // createBindingToolExecutionContext binds descriptor annotations and lazy remote runtime creation to one execution lifecycle.
@@ -531,60 +472,37 @@ function createBindingToolExecutionContext(args: {
   };
 }
 
-// buildBindingToolRemoteRuntime constructs the shared vulcan-host client/context pair used by remote and hybrid binding tools.
-// buildBindingToolRemoteRuntime 构建远端与混合型绑定工具共用的 vulcan-host client/context 对。
+// buildBindingToolRemoteRuntime constructs the shared vulcan-host client/context pair used by remote and hybrid binding branches.
+// buildBindingToolRemoteRuntime 构建远端与混合型绑定分支共用的 vulcan-host client/context 对。
 function buildBindingToolRemoteRuntime(params: BindingToolParams): BindingToolRemoteRuntime {
+  if (isVulcanHostConnectionUnavailable(params.config)) {
+    ensureVulcanHostReconnectScheduled(params.config, { logger: params.api.logger });
+    params.api.logger.debug?.(
+      `vulcan-memory: ${peekVulcanHostConnectionSnapshot(params.config).target} is reconnecting; binding remote runtime will fail fast.`,
+    );
+    throw new Error(BINDING_UNAVAILABLE_MESSAGE);
+  }
   return {
     client: createVulcanHostClient(params.config),
     context: buildToolHostContext(params.ctx, params.config),
   };
 }
 
-// readBindDefaultUserParams validates the default-user binding input while preserving the explicit creation policy.
-// readBindDefaultUserParams 校验默认用户绑定输入，并保留显式创建策略。
-function readBindDefaultUserParams(
-  value: unknown,
-): { userRef: string; createIfMissing: boolean } | null {
+// readBindCommandInput validates the compact command shape while preserving optional fields for the execution stage.
+// readBindCommandInput 校验精简命令形态，并为执行阶段保留可选字段。
+function readBindCommandInput(value: unknown): BindCommandInput | null {
   const record = asRecord(value);
-  const userRef = readOptionalString(record.userRef);
-  if (!userRef) {
+  const action = readBindAction(record.action);
+  const resource = readBindResource(record.resource);
+  if (!action || !resource) {
     return null;
   }
   return {
-    userRef,
-    createIfMissing: record.createIfMissing === true,
-  };
-}
-
-// readBindProjectParams validates the default-project binding input while preserving the explicit creation policy.
-// readBindProjectParams 校验默认项目绑定输入，并保留显式创建策略。
-function readBindProjectParams(
-  value: unknown,
-): { projectRef: string; createIfMissing: boolean } | null {
-  const record = asRecord(value);
-  const projectRef = readOptionalString(record.projectRef);
-  if (!projectRef) {
-    return null;
-  }
-  return {
-    projectRef,
-    createIfMissing: record.createIfMissing === true,
-  };
-}
-
-// readBindAgentProjectParams validates the agent-project binding input while keeping agent selection optional for current-agent flows.
-// readBindAgentProjectParams 校验 agent 项目绑定输入，并保留“当前 agent 默认生效”的可选目标语义。
-function readBindAgentProjectParams(
-  value: unknown,
-): { agentId?: string | undefined; projectRef: string; createIfMissing: boolean } | null {
-  const record = asRecord(value);
-  const projectRef = readOptionalString(record.projectRef);
-  if (!projectRef) {
-    return null;
-  }
-  return {
+    action,
+    resource,
+    scope: readBindScope(record.scope),
+    ref: readOptionalString(record.ref),
     agentId: readOptionalString(record.agentId),
-    projectRef,
     createIfMissing: record.createIfMissing === true,
   };
 }
@@ -644,6 +562,89 @@ function resolveTargetAgentId(
   return resolvedAgentId;
 }
 
+// listGeneratedBindingDescriptors keeps only the compact binding/admin descriptor synchronized from vulcan-host.
+// listGeneratedBindingDescriptors 只保留从 vulcan-host 同步下来的精简绑定/管理 descriptor。
+function listGeneratedBindingDescriptors(): VulcanToolDescriptor[] {
+  return GENERATED_VMM_TOOLS.filter((descriptor) => {
+    if (readToolGroup(descriptor) !== VULCAN_BINDING_TOOL_GROUP) {
+      return false;
+    }
+    if (readVisibility(descriptor) !== VULCAN_BINDING_TOOL_VISIBILITY) {
+      return false;
+    }
+    return readRegistrationSurface(descriptor) === VULCAN_BINDING_CONSOLIDATED_SURFACE;
+  });
+}
+
+// resolveBindingToolDescriptor prefers one synchronized compact binding descriptor while keeping a local fallback for bootstrap scenarios.
+// resolveBindingToolDescriptor 优先使用同步下来的精简绑定 descriptor，并在引导期保留本地回退。
+function resolveBindingToolDescriptor(toolName: BindingToolName): VulcanToolDescriptor {
+  return (
+    GENERATED_VMM_TOOLS.find((descriptor) => descriptor.name === toolName) ?? {
+      name: toolName,
+      description: VULCAN_BIND_FALLBACK_DESCRIPTION,
+      inputSchema: VulcanBindSchema as unknown as JsonObject,
+    }
+  );
+}
+
+// resolveBindingExecutionMode reads the synchronized execution boundary so the host only allocates a remote runtime when the contract allows it.
+// resolveBindingExecutionMode 读取同步执行边界，让宿主仅在契约允许时才分配远端运行时。
+function resolveBindingExecutionMode(descriptor: VulcanToolDescriptor): BindingToolExecutionMode {
+  const mode = readAnnotationString(descriptor, "execution_mode");
+  return mode === "local" || mode === "remote" || mode === "hybrid" ? mode : "hybrid";
+}
+
+// readToolGroup extracts the synchronized tool-group annotation used to separate binding descriptors from memory descriptors.
+// readToolGroup 提取同步下来的工具分组注解，用于区分绑定 descriptor 与记忆 descriptor。
+function readToolGroup(descriptor: VulcanToolDescriptor): string | undefined {
+  return readAnnotationString(descriptor, "tool_group");
+}
+
+// readVisibility extracts the synchronized visibility hint used to keep non-admin descriptors out of this registration path.
+// readVisibility 提取同步下来的可见性提示，用于把非 admin descriptor 排除在当前注册路径之外。
+function readVisibility(descriptor: VulcanToolDescriptor): string | undefined {
+  return readAnnotationString(descriptor, "visibility");
+}
+
+// readRegistrationSurface extracts the synchronized registration-surface hint used to pick the compact binding contract over legacy per-action tools.
+// readRegistrationSurface 提取同步下来的注册面提示，用于优先选择精简绑定契约而不是旧的逐动作工具。
+function readRegistrationSurface(descriptor: VulcanToolDescriptor): string | undefined {
+  return readAnnotationString(descriptor, "registration_surface");
+}
+
+// readAnnotationString keeps only string annotations from synchronized descriptors.
+// readAnnotationString 只保留同步 descriptor 中的字符串注解值。
+function readAnnotationString(descriptor: VulcanToolDescriptor, key: string): string | undefined {
+  const value = descriptor.annotations?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+// readBindAction narrows one loose input value into a supported compact binding action.
+// readBindAction 将宽松输入值收窄为受支持的精简绑定动作。
+function readBindAction(value: unknown): BindAction | undefined {
+  const normalized = readOptionalString(value);
+  return normalized === "inspect" || normalized === "list" || normalized === "bind" || normalized === "clear"
+    ? normalized
+    : undefined;
+}
+
+// readBindResource narrows one loose input value into a supported compact binding resource.
+// readBindResource 将宽松输入值收窄为受支持的精简绑定资源。
+function readBindResource(value: unknown): BindResource | undefined {
+  const normalized = readOptionalString(value);
+  return normalized === "bindings" || normalized === "user" || normalized === "project"
+    ? normalized
+    : undefined;
+}
+
+// readBindScope narrows one loose input value into a supported compact binding scope.
+// readBindScope 将宽松输入值收窄为受支持的精简绑定范围。
+function readBindScope(value: unknown): BindScope | undefined {
+  const normalized = readOptionalString(value);
+  return normalized === "global" || normalized === "agent" ? normalized : undefined;
+}
+
 // readOptionalString preserves only non-empty trimmed strings from loose tool input objects.
 // readOptionalString 只保留宽松工具输入对象中的非空裁剪字符串。
 function readOptionalString(value: unknown): string | undefined {
@@ -658,52 +659,8 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-// findGeneratedDescriptor locates one host-synchronized binding/admin descriptor by exact tool name.
-// findGeneratedDescriptor 按精确工具名定位一条宿主同步下来的绑定或管理 descriptor。
-function findGeneratedDescriptor(toolName: string): VulcanToolDescriptor | undefined {
-  return GENERATED_VMM_TOOLS.find((descriptor) => descriptor.name === toolName);
-}
-
-// listGeneratedBindingDescriptors keeps only the host-synchronized descriptors that belong to the VMM binding/admin tool group.
-// listGeneratedBindingDescriptors 只保留属于 VMM 绑定/管理工具组的宿主同步 descriptor。
-function listGeneratedBindingDescriptors(): VulcanToolDescriptor[] {
-  return GENERATED_VMM_TOOLS.filter((descriptor) => readToolGroup(descriptor) === "vmm-binding");
-}
-
-// resolveBindingToolDescriptor prefers one synchronized binding/admin descriptor while falling back to the local bootstrap contract.
-// resolveBindingToolDescriptor 优先使用同步下来的绑定/管理 descriptor，并在缺失时回退到本地引导契约。
-function resolveBindingToolDescriptor(definition: BindingToolDefinition): VulcanToolDescriptor {
-  return (
-    findGeneratedDescriptor(definition.name) ?? {
-      name: definition.name,
-      description: definition.fallbackDescription,
-      inputSchema: definition.fallbackSchema as unknown as JsonObject,
-    }
-  );
-}
-
-// resolveBindingExecutionMode reads the synchronized execution boundary so the host only allocates remote runtime when the contract allows it.
-// resolveBindingExecutionMode 读取同步执行边界，让宿主仅在契约允许时才分配远端运行时。
-function resolveBindingExecutionMode(descriptor: VulcanToolDescriptor): BindingToolExecutionMode {
-  const mode = readAnnotationString(descriptor, "execution_mode");
-  return mode === "local" || mode === "remote" || mode === "hybrid" ? mode : "hybrid";
-}
-
-// readToolGroup extracts the synchronized tool-group annotation used to separate binding/admin descriptors from memory descriptors.
-// readToolGroup 提取同步下来的工具分组注解，用于区分绑定/管理 descriptor 与记忆 descriptor。
-function readToolGroup(descriptor: VulcanToolDescriptor): string | undefined {
-  return readAnnotationString(descriptor, "tool_group");
-}
-
-// readAnnotationString keeps only string annotations from synchronized descriptors.
-// readAnnotationString 只保留同步 descriptor 中的字符串注解值。
-function readAnnotationString(descriptor: VulcanToolDescriptor, key: string): string | undefined {
-  const value = descriptor.annotations?.[key];
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-// isBindingToolName narrows a loose descriptor name back into one known binding/admin tool id understood by this host adapter.
-// isBindingToolName 将宽松的 descriptor 名称收窄为当前宿主适配器理解的绑定/管理工具 ID。
+// isBindingToolName narrows a loose descriptor name back into the one compact binding tool id understood by this host adapter.
+// isBindingToolName 将宽松 descriptor 名称收窄为当前宿主适配器理解的单一精简绑定工具 ID。
 function isBindingToolName(value: string): value is BindingToolName {
-  return value in VULCAN_BINDING_TOOL_DEFINITIONS;
+  return value === VULCAN_BIND_TOOL_NAME;
 }

@@ -2,10 +2,15 @@
 // 本文件实现把 OpenClaw 记忆工作流桥接到 Vulcan Memory Mesh 的原生与兼容工具。
 
 import {
+  buildVulcanCapabilityUnavailableMessage,
   buildToolHostContext,
   createVulcanHostClient,
+  ensureVulcanHostReconnectScheduled,
   errorToolResult,
+  isVulcanHostConnectionUnavailable,
+  isVulcanHostTransportError,
   jsonToolResult,
+  peekVulcanHostConnectionSnapshot,
   textToolResult,
   type JsonValue,
   type ResolvedVulcanConfig,
@@ -25,8 +30,8 @@ import {
 } from "./manager.js";
 import { GENERATED_VMM_TOOLS } from "./generated/vmm-tools.generated.js";
 
-// MemorySearchSchema follows the canonical OpenClaw memory_search tool shape so the model sees a familiar contract.
-// MemorySearchSchema 遵循 canonical OpenClaw memory_search 工具形态，让模型看到熟悉契约。
+// MemorySearchSchema follows the legacy bridge memory_search shape so OpenClaw can still expose a standard-name adapter when required.
+// MemorySearchSchema 遵循旧式桥接 memory_search 形态，让 OpenClaw 在必要时仍可暴露标准名称适配器。
 const MemorySearchSchema = {
   type: "object",
   additionalProperties: false,
@@ -53,8 +58,8 @@ const MemorySearchSchema = {
   required: ["query"],
 } as const;
 
-// MemoryGetSchema follows the canonical OpenClaw memory_get tool shape while reading Vulcan pseudo-paths.
-// MemoryGetSchema 遵循 canonical OpenClaw memory_get 工具形态，同时读取 Vulcan 伪路径。
+// MemoryGetSchema follows the legacy bridge memory_get shape while reading Vulcan pseudo-paths.
+// MemoryGetSchema 遵循旧式桥接 memory_get 形态，同时读取 Vulcan 伪路径。
 const MemoryGetSchema = {
   type: "object",
   additionalProperties: false,
@@ -81,8 +86,8 @@ const MemoryGetSchema = {
   required: ["path"],
 } as const;
 
-// CompatMemorySearchSchema preserves the grouped VMM search input already used by existing operator prompts.
-// CompatMemorySearchSchema 保留现有操作提示词已经使用的分组 VMM 搜索输入。
+// CompatMemorySearchSchema serves the primary Vulcan-native grouped search surface exposed to OpenClaw models.
+// CompatMemorySearchSchema 作为 OpenClaw 模型可见的主 Vulcan 原生分组搜索表面。
 const CompatMemorySearchSchema = {
   type: "object",
   additionalProperties: false,
@@ -103,8 +108,8 @@ const CompatMemorySearchSchema = {
   required: ["queries"],
 } as const;
 
-// CompatMemoryGetSchema preserves the source-turn oriented grouped-read input already used by operator prompts.
-// CompatMemoryGetSchema 保留现有操作提示词已经使用的 source-turn 分组读取输入。
+// CompatMemoryGetSchema serves the primary Vulcan-native grouped follow-up reader exposed to OpenClaw models.
+// CompatMemoryGetSchema 作为 OpenClaw 模型可见的主 Vulcan 原生分组后续读取表面。
 const CompatMemoryGetSchema = {
   type: "object",
   additionalProperties: false,
@@ -119,13 +124,21 @@ const CompatMemoryGetSchema = {
   required: ["turnIds"],
 } as const;
 
-// BACKING_VMM_SEARCH_TOOL is the canonical VMM grouped search descriptor synchronized from vulcan-host.
-// BACKING_VMM_SEARCH_TOOL 是从 vulcan-host 同步下来的标准 VMM 分组检索描述符。
-const BACKING_VMM_SEARCH_TOOL = "vmm_memory_search";
+// CANONICAL_MEMORY_SEARCH_TOOL is the legacy bridge memory_search descriptor synchronized from vulcan-host.
+// CANONICAL_MEMORY_SEARCH_TOOL 是从 vulcan-host 同步下来的旧式桥接 memory_search 描述符。
+const CANONICAL_MEMORY_SEARCH_TOOL = "memory_search";
 
-// BACKING_VMM_GET_TOOL is the canonical VMM turn-detail descriptor synchronized from vulcan-host.
-// BACKING_VMM_GET_TOOL 是从 vulcan-host 同步下来的标准 VMM turn 详情描述符。
-const BACKING_VMM_GET_TOOL = "vmm_turn_details";
+// CANONICAL_MEMORY_GET_TOOL is the legacy bridge memory_get descriptor synchronized from vulcan-host.
+// CANONICAL_MEMORY_GET_TOOL 是从 vulcan-host 同步下来的旧式桥接 memory_get 描述符。
+const CANONICAL_MEMORY_GET_TOOL = "memory_get";
+
+// COMPAT_MEMORY_SEARCH_TOOL is the primary Vulcan-native grouped search descriptor synchronized from vulcan-host.
+// COMPAT_MEMORY_SEARCH_TOOL 是从 vulcan-host 同步下来的主 Vulcan 原生分组搜索描述符。
+const COMPAT_MEMORY_SEARCH_TOOL = "vulcan_memory_search";
+
+// COMPAT_MEMORY_GET_TOOL is the primary Vulcan-native grouped read descriptor synchronized from vulcan-host.
+// COMPAT_MEMORY_GET_TOOL 是从 vulcan-host 同步下来的主 Vulcan 原生分组读取描述符。
+const COMPAT_MEMORY_GET_TOOL = "vulcan_memory_get";
 
 // CreateMemoryToolParams groups dependencies needed to construct OpenClaw memory tools.
 // CreateMemoryToolParams 汇总构造 OpenClaw 记忆工具所需的依赖。
@@ -135,22 +148,58 @@ interface CreateMemoryToolParams {
   ctx: OpenClawPluginToolContext;
 }
 
-// createMemorySearchTool creates the canonical OpenClaw memory_search tool backed by VMM.
-// createMemorySearchTool 创建由 VMM 支撑的 canonical OpenClaw memory_search 工具。
+// MEMORY_UNAVAILABLE_MESSAGE keeps one stable operator-facing failure text for all Vulcan memory surfaces while host reconnect is in progress.
+// MEMORY_UNAVAILABLE_MESSAGE 为所有 Vulcan 记忆表面保留一条稳定的面向操作者失败文本，供宿主重连期间复用。
+const MEMORY_UNAVAILABLE_MESSAGE = buildVulcanCapabilityUnavailableMessage("memory");
+
+// failFastWhenHostDisconnected returns one immediate memory-tool failure when the shared host state is already degraded.
+// failFastWhenHostDisconnected 会在共享 host 状态已进入降级态时立即返回一条记忆工具失败结果。
+function failFastWhenHostDisconnected(params: CreateMemoryToolParams) {
+  if (!isVulcanHostConnectionUnavailable(params.config)) {
+    return null;
+  }
+  ensureVulcanHostReconnectScheduled(params.config, { logger: params.api.logger });
+  params.api.logger.debug?.(
+    `vulcan-memory: ${peekVulcanHostConnectionSnapshot(params.config).target} is reconnecting; fail fast for this tool call.`,
+  );
+  return errorToolResult(MEMORY_UNAVAILABLE_MESSAGE);
+}
+
+// mapMemoryTransportError normalizes transport failures into one stable degraded-state tool result while preserving non-transport errors for diagnostics.
+// mapMemoryTransportError 会把传输层失败归一化为稳定的降级态工具结果，同时保留非传输错误供诊断。
+function mapMemoryTransportError(
+  params: CreateMemoryToolParams,
+  error: unknown,
+): ReturnType<typeof errorToolResult> | null {
+  if (!isVulcanHostTransportError(error)) {
+    return null;
+  }
+  ensureVulcanHostReconnectScheduled(params.config, { logger: params.api.logger, force: true });
+  return errorToolResult(MEMORY_UNAVAILABLE_MESSAGE);
+}
+
+// createMemorySearchTool creates the optional bridge memory_search tool backed by VMM.
+// createMemorySearchTool 创建由 VMM 支撑的可选桥接 memory_search 工具。
 export function createMemorySearchTool(params: CreateMemoryToolParams): AnyAgentTool | null {
   if (!params.config.enabled || !params.config.memory.enabled) {
     return null;
   }
   return {
     name: "memory_search",
-    label: "Memory Search",
-    description:
-      "Mandatory recall step for Vulcan-backed OpenClaw memory. Search durable VMM memories and session-backed source turns before answering when prior project facts, preferences, requirements, bugs, or decisions may matter.",
-    parameters: MemorySearchSchema,
+    label: "Legacy Memory Search",
+    description: resolveGeneratedDescription(
+      CANONICAL_MEMORY_SEARCH_TOOL,
+      "Legacy bridge surface for hosts that still require the canonical `memory_search` name. Search durable VMM memories and session-backed source turns before answering when prior project facts, preferences, requirements, bugs, or decisions may matter. Hosts that expose explicit Vulcan tools should prefer `vulcan_memory_search` instead.",
+    ),
+    parameters: resolveGeneratedSchema(CANONICAL_MEMORY_SEARCH_TOOL, MemorySearchSchema),
     async execute(_toolCallId, rawParams) {
       const input = readCanonicalSearchParams(rawParams);
       if (!input) {
         return errorToolResult("query must be a non-empty string.");
+      }
+      const unavailable = failFastWhenHostDisconnected(params);
+      if (unavailable) {
+        return unavailable;
       }
       if (input.corpus === "wiki") {
         return jsonToolResult({
@@ -180,6 +229,10 @@ export function createMemorySearchTool(params: CreateMemoryToolParams): AnyAgent
         } as unknown as JsonValue);
       } catch (error) {
         params.api.logger.warn?.(`vulcan-memory: memory_search failed: ${String(error)}`);
+        const unavailable = mapMemoryTransportError(params, error);
+        if (unavailable) {
+          return unavailable;
+        }
         return jsonToolResult({
           results: [],
           disabled: true,
@@ -191,22 +244,28 @@ export function createMemorySearchTool(params: CreateMemoryToolParams): AnyAgent
   };
 }
 
-// createMemoryGetTool creates the canonical OpenClaw memory_get tool backed by the native VMM manager.
-// createMemoryGetTool 创建由原生 VMM manager 支撑的 canonical OpenClaw memory_get 工具。
+// createMemoryGetTool creates the optional bridge memory_get tool backed by the native VMM manager.
+// createMemoryGetTool 创建由原生 VMM manager 支撑的可选桥接 memory_get 工具。
 export function createMemoryGetTool(params: CreateMemoryToolParams): AnyAgentTool | null {
   if (!params.config.enabled || !params.config.memory.enabled) {
     return null;
   }
   return {
     name: "memory_get",
-    label: "Memory Get",
-    description:
-      "Read one exact Vulcan memory pseudo-document returned by memory_search, including source turn documents and durable memory previews.",
-    parameters: MemoryGetSchema,
+    label: "Legacy Memory Get",
+    description: resolveGeneratedDescription(
+      CANONICAL_MEMORY_GET_TOOL,
+      "Legacy bridge surface for hosts that still require the canonical `memory_get` name. Read one exact Vulcan memory pseudo-document returned by `memory_search`, including source turn documents and durable memory previews. Hosts that expose explicit Vulcan tools should prefer `vulcan_memory_get` instead.",
+    ),
+    parameters: resolveGeneratedSchema(CANONICAL_MEMORY_GET_TOOL, MemoryGetSchema),
     async execute(_toolCallId, rawParams) {
       const input = readCanonicalGetParams(rawParams);
       if (!input) {
         return errorToolResult("path must be a non-empty string.");
+      }
+      const unavailable = failFastWhenHostDisconnected(params);
+      if (unavailable) {
+        return unavailable;
       }
       if (input.corpus === "wiki") {
         return jsonToolResult({
@@ -231,6 +290,10 @@ export function createMemoryGetTool(params: CreateMemoryToolParams): AnyAgentToo
         return jsonToolResult(result as unknown as JsonValue);
       } catch (error) {
         params.api.logger.warn?.(`vulcan-memory: memory_get failed: ${String(error)}`);
+        const unavailable = mapMemoryTransportError(params, error);
+        if (unavailable) {
+          return unavailable;
+        }
         return jsonToolResult({
           path: input.path,
           text: "",
@@ -242,8 +305,8 @@ export function createMemoryGetTool(params: CreateMemoryToolParams): AnyAgentToo
   };
 }
 
-// createVulcanMemorySearchTool creates the grouped VMM compatibility search tool already used by operator prompts.
-// createVulcanMemorySearchTool 创建现有操作提示词仍在使用的分组 VMM 兼容搜索工具。
+// createVulcanMemorySearchTool creates the primary Vulcan-native grouped search tool exposed to OpenClaw models.
+// createVulcanMemorySearchTool 创建对 OpenClaw 模型暴露的主 Vulcan 原生分组搜索工具。
 export function createVulcanMemorySearchTool(params: CreateMemoryToolParams): AnyAgentTool | null {
   if (!params.config.enabled || !params.config.memory.enabled) {
     return null;
@@ -252,14 +315,18 @@ export function createVulcanMemorySearchTool(params: CreateMemoryToolParams): An
     name: "vulcan_memory_search",
     label: "Vulcan Memory Search",
     description: resolveGeneratedDescription(
-      BACKING_VMM_SEARCH_TOOL,
-      "Search durable Vulcan Memory Mesh memories for the current OpenClaw runtime. Use when you need grouped raw hits, memory ids, category labels, or source_turn_id values for follow-up inspection.",
+      COMPAT_MEMORY_SEARCH_TOOL,
+      "Primary Vulcan-native memory search surface for the current OpenClaw runtime. Search durable Vulcan Memory Mesh memories when prior project facts, requirements, decisions, bugs, preferences, or durable context may matter. The grouped result format keeps raw hits, memory ids, category labels, and source_turn_id values available for precise follow-up inspection.",
     ),
-    parameters: resolveGeneratedSchema(BACKING_VMM_SEARCH_TOOL, CompatMemorySearchSchema),
+    parameters: resolveGeneratedSchema(COMPAT_MEMORY_SEARCH_TOOL, CompatMemorySearchSchema),
     async execute(_toolCallId, rawParams) {
       const input = readCompatSearchParams(rawParams, params.config.memory.recallTopK);
       if (!input) {
         return errorToolResult("queries must be a non-empty string array.");
+      }
+      const unavailable = failFastWhenHostDisconnected(params);
+      if (unavailable) {
+        return unavailable;
       }
       try {
         const client = createVulcanHostClient(params.config);
@@ -279,14 +346,18 @@ export function createVulcanMemorySearchTool(params: CreateMemoryToolParams): An
         );
       } catch (error) {
         params.api.logger.warn?.(`vulcan-memory: grouped search failed: ${String(error)}`);
+        const unavailable = mapMemoryTransportError(params, error);
+        if (unavailable) {
+          return unavailable;
+        }
         return errorToolResult(error instanceof Error ? error.message : String(error));
       }
     },
   };
 }
 
-// createVulcanMemoryGetTool creates the grouped VMM source-turn detail reader already used by operator prompts.
-// createVulcanMemoryGetTool 创建现有操作提示词仍在使用的分组 VMM source-turn 详情读取工具。
+// createVulcanMemoryGetTool creates the primary Vulcan-native grouped follow-up reader exposed to OpenClaw models.
+// createVulcanMemoryGetTool 创建对 OpenClaw 模型暴露的主 Vulcan 原生分组后续读取工具。
 export function createVulcanMemoryGetTool(params: CreateMemoryToolParams): AnyAgentTool | null {
   if (!params.config.enabled || !params.config.memory.enabled) {
     return null;
@@ -295,14 +366,18 @@ export function createVulcanMemoryGetTool(params: CreateMemoryToolParams): AnyAg
     name: "vulcan_memory_get",
     label: "Vulcan Memory Get",
     description: resolveGeneratedDescription(
-      BACKING_VMM_GET_TOOL,
-      "Load structured source turn details for non-zero source_turn_id values returned by vulcan_memory_search.",
+      COMPAT_MEMORY_GET_TOOL,
+      "Primary Vulcan-native follow-up reader for non-zero source_turn_id values returned by `vulcan_memory_search`. Use this when grouped search results point at one or more real source turns and you need structured turn details instead of pseudo-document reads.",
     ),
-    parameters: resolveGeneratedSchema(BACKING_VMM_GET_TOOL, CompatMemoryGetSchema),
+    parameters: resolveGeneratedSchema(COMPAT_MEMORY_GET_TOOL, CompatMemoryGetSchema),
     async execute(_toolCallId, rawParams) {
       const input = readCompatGetParams(rawParams);
       if (!input) {
         return errorToolResult("turnIds must be a non-empty string array.");
+      }
+      const unavailable = failFastWhenHostDisconnected(params);
+      if (unavailable) {
+        return unavailable;
       }
       try {
         const client = createVulcanHostClient(params.config);
@@ -314,6 +389,10 @@ export function createVulcanMemoryGetTool(params: CreateMemoryToolParams): AnyAg
         return textToolResult(formatVulcanTurnDetailsText(turns), { turns });
       } catch (error) {
         params.api.logger.warn?.(`vulcan-memory: grouped get failed: ${String(error)}`);
+        const unavailable = mapMemoryTransportError(params, error);
+        if (unavailable) {
+          return unavailable;
+        }
         return errorToolResult(error instanceof Error ? error.message : String(error));
       }
     },

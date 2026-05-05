@@ -128,6 +128,8 @@ export interface VulcanToolDescriptor {
   name: string;
   description: string;
   inputSchema: JsonObject;
+  // annotations carries host-neutral descriptor hints such as tool_group, execution_mode, registration_surface, visibility, and optional_context.
+  // annotations 承载宿主无关的 descriptor 提示，例如 tool_group、execution_mode、registration_surface、visibility 与 optional_context。
   annotations?: JsonObject | undefined;
   skillId?: string | undefined;
   entryName?: string | undefined;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Local one-shot installer for enabling Vulcan OpenClaw plugins with autostart-ready config.
-// 本脚本用于一键启用 Vulcan OpenClaw 插件，并写入可直接自启动的本地配置。
+// Local one-shot installer for enabling Vulcan OpenClaw plugins with system-service-oriented host config.
+// 本脚本用于一键启用 Vulcan OpenClaw 插件，并写入面向系统服务托管的本地配置。
 
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -37,10 +37,6 @@ const DEFAULT_ENDPOINT = "127.0.0.1:19202";
 // DEFAULT_PROTO_PATH 指向 OpenClaw gRPC 桥接使用的本地 proto 契约文件。
 const DEFAULT_PROTO_PATH = "D:/projects/vulcan-mcp-client/proto/v1/mcp_service.proto";
 
-// DEFAULT_HOST_READY_TIMEOUT_MS bounds how long runtime autostart should wait for vulcan-host readiness.
-// DEFAULT_HOST_READY_TIMEOUT_MS 用于限制运行时自启动等待 vulcan-host 就绪的最长时间。
-const DEFAULT_HOST_READY_TIMEOUT_MS = 15_000;
-
 // PNPM_COMMAND keeps nested workspace script execution portable across Windows and POSIX.
 // PNPM_COMMAND 用于让嵌套的工作区脚本执行同时兼容 Windows 与类 Unix 环境。
 const PNPM_COMMAND = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -48,18 +44,6 @@ const PNPM_COMMAND = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 // OPENCLAW_COMMAND keeps OpenClaw CLI invocations portable across Windows and POSIX.
 // OPENCLAW_COMMAND 用于让 OpenClaw CLI 调用同时兼容 Windows 与类 Unix 环境。
 const OPENCLAW_COMMAND = process.platform === "win32" ? "openclaw.cmd" : "openclaw";
-
-// DEFAULT_HOST_COMMAND_CANDIDATES lists the common local vulcan-mcp binary locations expected in this workspace layout.
-// DEFAULT_HOST_COMMAND_CANDIDATES 列出当前工作区布局下常见的本地 vulcan-mcp 二进制位置。
-const DEFAULT_HOST_COMMAND_CANDIDATES = process.platform === "win32"
-  ? [
-      "D:/projects/vulcan-mcp-client/target/release/vulcan-mcp.exe",
-      "D:/projects/vulcan-mcp-client/target/debug/vulcan-mcp.exe",
-    ]
-  : [
-      "D:/projects/vulcan-mcp-client/target/release/vulcan-mcp",
-      "D:/projects/vulcan-mcp-client/target/debug/vulcan-mcp",
-    ];
 
 /**
  * Execute one command and mirror its output to the current terminal.
@@ -181,29 +165,13 @@ function removeString(value, item) {
 }
 
 /**
- * Resolve the preferred local vulcan-mcp binary path when a common workspace build already exists.
- * 当常见工作区构建产物存在时解析首选的本地 vulcan-mcp 二进制路径。
- *
- * @returns {string | undefined} Preferred vulcan-mcp binary path when available.
- * 可用时返回首选的 vulcan-mcp 二进制路径。
- */
-function resolvePreferredHostCommand() {
-  for (const candidate of DEFAULT_HOST_COMMAND_CANDIDATES) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return undefined;
-}
-
-/**
  * Merge Vulcan plugin settings into the current OpenClaw config object.
  * 将 Vulcan 插件设置合并进当前 OpenClaw 配置对象。
  *
  * @param {Record<string, unknown>} config Raw OpenClaw config object.
  * 原始 OpenClaw 配置对象。
- * @returns {{config: Record<string, unknown>, hostCommand?: string}} Updated config plus the resolved host command.
- * 更新后的配置以及解析出的 host 命令。
+ * @returns {{config: Record<string, unknown>}} Updated config object.
+ * 返回更新后的配置对象。
  */
 function applyVulcanPluginConfig(config) {
   const next = { ...config };
@@ -211,8 +179,6 @@ function applyVulcanPluginConfig(config) {
   const entries = isRecord(plugins.entries) ? { ...plugins.entries } : {};
   const load = isRecord(plugins.load) ? { ...plugins.load } : {};
   const slots = isRecord(plugins.slots) ? { ...plugins.slots } : {};
-
-  const hostCommand = resolvePreferredHostCommand();
 
   const toolsEntry = isRecord(entries["vulcan-tools"]) ? { ...entries["vulcan-tools"] } : {};
   const toolsConfig = isRecord(toolsEntry.config) ? { ...toolsEntry.config } : {};
@@ -236,14 +202,9 @@ function applyVulcanPluginConfig(config) {
   load.paths = appendUniqueString(retainedLoadPaths, VULCAN_MEMORY_ARTIFACT_PATH);
   load.paths = appendUniqueString(load.paths, VULCAN_TOOLS_ARTIFACT_PATH);
 
-  // Enable the tools plugin and preseed the host autostart policy so local installs do not require a second manual toggle.
-  // 启用 tools 插件，并预置 host 自启动策略，让本地安装不再需要第二次手工开关。
-  toolsHostConfig.autoStart = true;
-  if (hostCommand) {
-    toolsHostConfig.command = toolsHostConfig.command ?? hostCommand;
-    toolsHostConfig.cwd = toolsHostConfig.cwd ?? path.dirname(hostCommand);
-  }
-  toolsHostConfig.readyTimeoutMs = toolsHostConfig.readyTimeoutMs ?? DEFAULT_HOST_READY_TIMEOUT_MS;
+  // Enable the tools plugin, but keep vulcan-host lifecycle outside the plugin so operators can manage it as one shared system service.
+  // 启用 tools 插件，但保持 vulcan-host 生命周期在插件之外，让操作者按共享系统服务方式统一管理。
+  toolsHostConfig.autoStart = false;
 
   toolsToolConfig.enabled = toolsToolConfig.enabled ?? true;
   toolsToolConfig.dispatcherEnabled = toolsToolConfig.dispatcherEnabled ?? true;
@@ -302,7 +263,7 @@ function applyVulcanPluginConfig(config) {
     slots,
   };
 
-  return { config: next, hostCommand };
+  return { config: next };
 }
 
 /**
@@ -347,7 +308,7 @@ async function main() {
   // Rewrite the plugin load paths before touching Gateway so renamed repositories do not leave stale artifact roots behind.
   // 在操作 Gateway 之前先重写插件加载路径，避免仓库改名后残留失效的旧产物目录。
   const currentConfig = await readJsonObject(OPENCLAW_CONFIG_PATH, {});
-  const { config: nextConfig, hostCommand } = applyVulcanPluginConfig(currentConfig);
+  const { config: nextConfig } = applyVulcanPluginConfig(currentConfig);
   await writeJsonObject(OPENCLAW_CONFIG_PATH, nextConfig);
   console.log(`Updated OpenClaw config: ${OPENCLAW_CONFIG_PATH}`);
 
@@ -373,11 +334,8 @@ async function main() {
   console.log(`- memory artifact: ${VULCAN_MEMORY_ARTIFACT_PATH}`);
   console.log(`- tools artifact: ${VULCAN_TOOLS_ARTIFACT_PATH}`);
   console.log(`- config file: ${OPENCLAW_CONFIG_PATH}`);
-  if (hostCommand) {
-    console.log(`- vulcan-host autostart command: ${hostCommand}`);
-  } else {
-    console.log("- vulcan-host autostart command: not auto-detected; set plugins.entries.vulcan-tools.config.host.command manually if needed");
-  }
+  console.log(`- vulcan-host endpoint: ${DEFAULT_ENDPOINT}`);
+  console.log("- vulcan-host lifecycle: manage it as an external system service before using Vulcan tools");
 }
 
 await main();

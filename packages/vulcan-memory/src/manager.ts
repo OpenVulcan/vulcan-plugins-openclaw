@@ -1,12 +1,17 @@
 // Native memory-manager bridge for routing OpenClaw memory flows into Vulcan Memory Mesh.
 // 本文件负责把 OpenClaw 原生记忆管理器桥接到 Vulcan Memory Mesh。
 
-import type {
-  ResolvedVulcanConfig,
-  VulcanHostClient,
-  VulcanHostContext,
-  VulcanVmmMemorySearchHit,
-  VulcanVmmTurnDetailEntry,
+import {
+  buildVulcanCapabilityUnavailableMessage,
+  ensureVulcanHostReconnectScheduled,
+  isVulcanHostConnectionUnavailable,
+  isVulcanHostTransportError,
+  markVulcanHostTransportFailure,
+  type ResolvedVulcanConfig,
+  type VulcanHostClient,
+  type VulcanHostContext,
+  type VulcanVmmMemorySearchHit,
+  type VulcanVmmTurnDetailEntry,
 } from "@vulcan-plugins-openclaw/shared";
 import { resolveVulcanMemoryScope, type VulcanResolvedMemoryScope } from "./vmm-scope.js";
 
@@ -115,6 +120,14 @@ interface CachedMemoryDocument {
 // MANAGER_CACHE stores native manager instances keyed by stable OpenClaw/Vulcan identity hints.
 // MANAGER_CACHE 按稳定的 OpenClaw/Vulcan 身份提示缓存原生 manager 实例。
 const MANAGER_CACHE = new Map<string, NativeVulcanMemoryManager>();
+
+// MANAGER_UNAVAILABLE_MESSAGE keeps one stable native-memory failure text while vulcan-host is disconnected and reconnecting.
+// MANAGER_UNAVAILABLE_MESSAGE 为 vulcan-host 断线重连期间保留一条稳定的原生记忆失败提示文本。
+const MANAGER_UNAVAILABLE_MESSAGE = buildVulcanCapabilityUnavailableMessage("memory");
+
+// HOST_DISCONNECTED_REASON tags provider-status degradation caused by host transport disconnects instead of binding or VMM business failures.
+// HOST_DISCONNECTED_REASON 标记由宿主传输断线引起的 provider-status 降级，而不是绑定或 VMM 业务失败。
+const HOST_DISCONNECTED_REASON = "vulcan-host-disconnected";
 
 // getOrCreateVulcanMemoryManager returns one cached manager for the provided base host context.
 // getOrCreateVulcanMemoryManager 为给定基础宿主上下文返回一个缓存的 manager。
@@ -275,47 +288,69 @@ class NativeVulcanMemoryManager implements VulcanMemorySearchManager {
     },
   ): Promise<MemorySearchResult[]> {
     const context = this.buildOperationContext({ sessionKey: opts?.sessionKey });
-    const resolved = await resolveVulcanMemoryScope({
-      client: this.client,
-      config: this.config,
-      context,
-      requireSession: false,
-      purpose: "manager",
-    });
-    if (!("scope" in resolved)) {
-      this.lastEmbeddingProbe = buildProbe(false, resolved.error);
-      this.lastStatus = buildFailureStatus(this.config, this.baseContext, resolved.error, resolved.degradedReasons);
-      throw new Error(resolved.error);
-    }
-    this.lastStatus = buildScopedStatus(this.config, this.baseContext, resolved.scope);
-    opts?.onDebug?.({
-      backend: "builtin",
-      configuredMode: "vulcan-vmm",
-      effectiveMode: "vulcan-vmm",
-      fallback: resolved.scope.identityReady ? undefined : "degraded-host-identity",
-    });
-
-    const response = await this.client.searchVmmMemories({
-      context,
-      userId: resolved.scope.user.userId,
-      projectId: resolved.scope.project.projectId,
-      queries: [query],
-      topK: Math.max(1, Math.floor(opts?.maxResults ?? 5)),
-    });
-    this.lastEmbeddingProbe = buildProbe(true);
-    const hits = response.results[0]?.hits ?? [];
-    const sourceFilter = new Set(opts?.sources ?? ["memory", "sessions"]);
-    return hits
-      .map((hit, index) => buildMemorySearchResult(hit, index, hits.length))
-      .filter((entry) => sourceFilter.has(entry.source))
-      .filter((entry) => opts?.minScore === undefined || entry.score >= opts.minScore)
-      .map((entry) => {
-        this.cachedDocuments.set(entry.path, {
-          path: entry.path,
-          text: buildCachedDocumentText(entry.path, hits.find((hit) => pathForHit(hit) === entry.path)),
-        });
-        return entry;
+    if (this.failFastWhenHostDisconnected()) {
+      opts?.onDebug?.({
+        backend: "builtin",
+        configuredMode: "vulcan-vmm",
+        effectiveMode: "vulcan-vmm",
+        fallback: "host-disconnected",
       });
+      return [];
+    }
+    try {
+      const resolved = await resolveVulcanMemoryScope({
+        client: this.client,
+        config: this.config,
+        context,
+        requireSession: false,
+        purpose: "manager",
+      });
+      if (!("scope" in resolved)) {
+        this.lastEmbeddingProbe = buildProbe(false, resolved.error);
+        this.lastStatus = buildFailureStatus(this.config, this.baseContext, resolved.error, resolved.degradedReasons);
+        throw new Error(resolved.error);
+      }
+      this.lastStatus = buildScopedStatus(this.config, this.baseContext, resolved.scope);
+      opts?.onDebug?.({
+        backend: "builtin",
+        configuredMode: "vulcan-vmm",
+        effectiveMode: "vulcan-vmm",
+        fallback: resolved.scope.identityReady ? undefined : "degraded-host-identity",
+      });
+
+      const response = await this.client.searchVmmMemories({
+        context,
+        userId: resolved.scope.user.userId,
+        projectId: resolved.scope.project.projectId,
+        queries: [query],
+        topK: Math.max(1, Math.floor(opts?.maxResults ?? 5)),
+      });
+      this.lastEmbeddingProbe = buildProbe(true);
+      const hits = response.results[0]?.hits ?? [];
+      const sourceFilter = new Set(opts?.sources ?? ["memory", "sessions"]);
+      return hits
+        .map((hit, index) => buildMemorySearchResult(hit, index, hits.length))
+        .filter((entry) => sourceFilter.has(entry.source))
+        .filter((entry) => opts?.minScore === undefined || entry.score >= opts.minScore)
+        .map((entry) => {
+          this.cachedDocuments.set(entry.path, {
+            path: entry.path,
+            text: buildCachedDocumentText(entry.path, hits.find((hit) => pathForHit(hit) === entry.path)),
+          });
+          return entry;
+        });
+    } catch (error) {
+      if (this.handleTransportFailure(error)) {
+        opts?.onDebug?.({
+          backend: "builtin",
+          configuredMode: "vulcan-vmm",
+          effectiveMode: "vulcan-vmm",
+          fallback: "host-disconnected",
+        });
+        return [];
+      }
+      throw error;
+    }
   }
 
   // readFile returns an exact pseudo-document excerpt for one VMM-backed memory or source turn.
@@ -327,17 +362,27 @@ class NativeVulcanMemoryManager implements VulcanMemorySearchManager {
     }
     const turnId = extractTurnId(normalizedPath);
     if (turnId) {
-      const turns = await this.client.getVmmTurnDetails({
-        context: this.baseContext,
-        turnIds: [turnId],
-      });
-      const detail = turns.turns[0];
-      if (!detail) {
-        throw new Error(`No VMM turn details were found for ${turnId}.`);
+      if (this.failFastWhenHostDisconnected()) {
+        throw new Error(MANAGER_UNAVAILABLE_MESSAGE);
       }
-      const text = buildTurnDetailDocument(detail);
-      this.cachedDocuments.set(normalizedPath, { path: normalizedPath, text });
-      return pageDocument(normalizedPath, text, params.from, params.lines);
+      try {
+        const turns = await this.client.getVmmTurnDetails({
+          context: this.baseContext,
+          turnIds: [turnId],
+        });
+        const detail = turns.turns[0];
+        if (!detail) {
+          throw new Error(`No VMM turn details were found for ${turnId}.`);
+        }
+        const text = buildTurnDetailDocument(detail);
+        this.cachedDocuments.set(normalizedPath, { path: normalizedPath, text });
+        return pageDocument(normalizedPath, text, params.from, params.lines);
+      } catch (error) {
+        if (this.handleTransportFailure(error)) {
+          throw new Error(MANAGER_UNAVAILABLE_MESSAGE);
+        }
+        throw error;
+      }
     }
     const cached = this.cachedDocuments.get(normalizedPath);
     if (!cached) {
@@ -367,15 +412,36 @@ class NativeVulcanMemoryManager implements VulcanMemorySearchManager {
   // probeEmbeddingAvailability checks whether VMM can currently resolve identity and serve semantic recall.
   // probeEmbeddingAvailability 检查 VMM 当前是否能解析身份并提供语义召回。
   async probeEmbeddingAvailability(): Promise<MemoryEmbeddingProbeResult> {
-    const resolved = await resolveVulcanMemoryScope({
-      client: this.client,
-      config: this.config,
-      context: this.baseContext,
-      requireSession: false,
-      purpose: "status",
-    });
-    this.lastEmbeddingProbe = "scope" in resolved ? buildProbe(true) : buildProbe(false, resolved.error);
-    return this.lastEmbeddingProbe;
+    if (this.failFastWhenHostDisconnected()) {
+      return this.lastEmbeddingProbe ?? buildProbe(false, MANAGER_UNAVAILABLE_MESSAGE);
+    }
+    try {
+      const resolved = await resolveVulcanMemoryScope({
+        client: this.client,
+        config: this.config,
+        context: this.baseContext,
+        requireSession: false,
+        purpose: "status",
+      });
+      if ("scope" in resolved) {
+        this.lastStatus = buildScopedStatus(this.config, this.baseContext, resolved.scope);
+        this.lastEmbeddingProbe = buildProbe(true);
+      } else {
+        this.lastEmbeddingProbe = buildProbe(false, resolved.error);
+        this.lastStatus = buildFailureStatus(
+          this.config,
+          this.baseContext,
+          resolved.error,
+          resolved.degradedReasons,
+        );
+      }
+      return this.lastEmbeddingProbe;
+    } catch (error) {
+      if (this.handleTransportFailure(error)) {
+        return this.lastEmbeddingProbe ?? buildProbe(false, MANAGER_UNAVAILABLE_MESSAGE);
+      }
+      throw error;
+    }
   }
 
   // probeVectorStoreAvailability reports whether the VMM search backend is reachable.
@@ -405,6 +471,35 @@ class NativeVulcanMemoryManager implements VulcanMemorySearchManager {
       sessionKey: overrides.sessionKey ?? this.baseContext.sessionKey,
       sessionId: this.baseContext.sessionId ?? overrides.sessionKey,
     };
+  }
+
+  // failFastWhenHostDisconnected downgrades provider status immediately when shared host state is already marked disconnected.
+  // failFastWhenHostDisconnected 会在共享 host 状态已被标记为断线时立刻降级 provider 状态。
+  private failFastWhenHostDisconnected(): boolean {
+    if (!isVulcanHostConnectionUnavailable(this.config)) {
+      return false;
+    }
+    ensureVulcanHostReconnectScheduled(this.config);
+    this.markUnavailableStatus(MANAGER_UNAVAILABLE_MESSAGE, [HOST_DISCONNECTED_REASON]);
+    return true;
+  }
+
+  // handleTransportFailure records one transport outage, updates native provider status, and signals whether callers should degrade instead of rethrowing.
+  // handleTransportFailure 记录一次传输故障、更新原生 provider 状态，并告知调用方是否应降级而非继续抛错。
+  private handleTransportFailure(error: unknown): boolean {
+    if (!isVulcanHostTransportError(error)) {
+      return false;
+    }
+    markVulcanHostTransportFailure(this.config, error);
+    this.markUnavailableStatus(MANAGER_UNAVAILABLE_MESSAGE, [HOST_DISCONNECTED_REASON]);
+    return true;
+  }
+
+  // markUnavailableStatus keeps the manager-side provider status aligned with the shared reconnect state during outages.
+  // markUnavailableStatus 让 manager 侧的 provider 状态在故障期间与共享重连状态保持一致。
+  private markUnavailableStatus(error: string, degradedReasons: string[]): void {
+    this.lastEmbeddingProbe = buildProbe(false, error);
+    this.lastStatus = buildFailureStatus(this.config, this.baseContext, error, degradedReasons);
   }
 }
 

@@ -35,6 +35,7 @@ export interface VulcanSessionMemoryState {
   committedTurnCount: number;
   lastTouchedAt: number;
   lastTurnKey?: string | undefined;
+  lastDisconnectNoticeEpoch?: number | undefined;
   profileBundle?: VulcanProfileBundleState | undefined;
   activeRecall?: VulcanActiveRecallState | undefined;
 }
@@ -46,6 +47,10 @@ const sessionStateStore = new Map<string, VulcanSessionMemoryState>();
 // nextRecallGeneration monotonically bumps recall generations so later updates can clearly supersede earlier cached recall.
 // nextRecallGeneration 单调递增 recall generation，让后续更新能明确替换掉更早的缓存 recall。
 let nextRecallGeneration = 1;
+
+// lastGlobalDisconnectNoticeToken keeps one process-level one-shot token for disconnect notices emitted without any session identity.
+// lastGlobalDisconnectNoticeToken 为没有任何 session 身份的断连提示保留一份进程级一次性令牌。
+let lastGlobalDisconnectNoticeToken: string | undefined;
 
 // getOrCreateSessionMemoryState returns one live session state and opportunistically prunes long-idle snapshots.
 // getOrCreateSessionMemoryState 返回一份存活中的 session 状态，并机会性清理长时间空闲的快照。
@@ -111,6 +116,7 @@ export function deleteSessionMemoryState(sessionKey: string | undefined): void {
 // clearAllSessionMemoryStates 丢弃全部运行时快照，主要供测试或未来插件卸载清理使用。
 export function clearAllSessionMemoryStates(): void {
   sessionStateStore.clear();
+  lastGlobalDisconnectNoticeToken = undefined;
 }
 
 // markSessionTurn records the latest turn key and reports whether this prompt-build pass opened a new real turn boundary.
@@ -190,6 +196,46 @@ export function incrementCommittedTurnCount(state: VulcanSessionMemoryState): nu
   state.committedTurnCount += 1;
   state.lastTouchedAt = Date.now();
   return state.committedTurnCount;
+}
+
+// shouldInjectDisconnectNotice reports whether the current disconnect epoch still needs one user-facing warning in this session.
+// shouldInjectDisconnectNotice 用于报告当前断连 epoch 是否仍需要在该 session 内注入一次面向用户的提示。
+export function shouldInjectDisconnectNotice(
+  state: VulcanSessionMemoryState | undefined,
+  disconnectEpoch: number,
+  noticeScopeKey = "global",
+): boolean {
+  if (disconnectEpoch <= 0) {
+    return false;
+  }
+  if (!state) {
+    return lastGlobalDisconnectNoticeToken !== buildDisconnectNoticeToken(noticeScopeKey, disconnectEpoch);
+  }
+  return state.lastDisconnectNoticeEpoch !== disconnectEpoch;
+}
+
+// markDisconnectNoticeInjected records that one disconnect epoch has already emitted its one-shot prompt for this session.
+// markDisconnectNoticeInjected 用于记录某个断连 epoch 已经在当前 session 中发出过一次性提示。
+export function markDisconnectNoticeInjected(
+  state: VulcanSessionMemoryState | undefined,
+  disconnectEpoch: number,
+  noticeScopeKey = "global",
+): void {
+  if (disconnectEpoch <= 0) {
+    return;
+  }
+  if (!state) {
+    lastGlobalDisconnectNoticeToken = buildDisconnectNoticeToken(noticeScopeKey, disconnectEpoch);
+    return;
+  }
+  state.lastDisconnectNoticeEpoch = disconnectEpoch;
+  state.lastTouchedAt = Date.now();
+}
+
+// buildDisconnectNoticeToken combines one disconnect epoch with one host-connection scope so global fallback notices do not collide across targets.
+// buildDisconnectNoticeToken 将断连 epoch 与宿主连接作用域组合起来，避免全局回退提示在不同目标之间互相冲突。
+function buildDisconnectNoticeToken(noticeScopeKey: string, disconnectEpoch: number): string {
+  return `${noticeScopeKey}::${disconnectEpoch}`;
 }
 
 // normalizeSessionKey trims one maybe-empty session key so state maps never key on whitespace noise.

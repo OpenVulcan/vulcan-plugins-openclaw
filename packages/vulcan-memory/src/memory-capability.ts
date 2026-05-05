@@ -48,17 +48,25 @@ export function createVulcanMemoryCapability(
   };
 }
 
-// buildVulcanMemoryPrompt returns stable model guidance once canonical memory tools are available.
-// buildVulcanMemoryPrompt 在 canonical memory 工具可用后返回稳定模型指导。
+// buildVulcanMemoryPrompt returns stable model guidance once one supported Vulcan memory tool surface is available.
+// buildVulcanMemoryPrompt 在可用的 Vulcan 记忆工具表面出现后返回稳定模型指导。
 function buildVulcanMemoryPrompt(
   config: ResolvedVulcanConfig,
   availableTools: Set<string>,
 ): string[] {
-  if (!config.enabled || !config.memory.enabled || !availableTools.has("memory_search")) {
+  if (!config.enabled || !config.memory.enabled) {
+    return [];
+  }
+  if (availableTools.has("vulcan_memory_search")) {
+    return [
+      "Vulcan memory owns the active OpenClaw memory slot. Use `vulcan_memory_search` before answering when prior project facts, decisions, requirements, bugs, user preferences, or source-turn context may matter. Use `vulcan_memory_get` when grouped recall results expose one or more non-zero source_turn_id values and you need structured turn details. Treat `memory_search` and `memory_get` only as legacy bridge tools when one workflow still requires the standard OpenClaw names.",
+    ];
+  }
+  if (!availableTools.has("memory_search")) {
     return [];
   }
   return [
-    "Vulcan memory owns the active OpenClaw memory slot. Use `memory_search` before answering when prior project facts, decisions, requirements, bugs, user preferences, or source-turn context may matter. Use `memory_get` to inspect a returned path. `vulcan_memory_search` and `vulcan_memory_get` remain available as VMM-oriented compatibility tools when raw grouped hits or source turn ids are needed.",
+    "Vulcan memory owns the active OpenClaw memory slot. Use `memory_search` before answering when prior project facts, decisions, requirements, bugs, user preferences, or source-turn context may matter. Use `memory_get` to inspect a returned path. When explicit Vulcan tools later become available in this runtime, prefer `vulcan_memory_search` and `vulcan_memory_get` instead of this legacy bridge pair.",
   ];
 }
 

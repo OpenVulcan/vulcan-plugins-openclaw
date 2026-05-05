@@ -5,6 +5,7 @@ export * from "./bindings.js";
 export * from "./config.js";
 export * from "./context.js";
 export * from "./generation.js";
+export * from "./host-connection-state.js";
 export * from "./grpc-vulcan-host-client.js";
 export * from "./results.js";
 export * from "./types.js";

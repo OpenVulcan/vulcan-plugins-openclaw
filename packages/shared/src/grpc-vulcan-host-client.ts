@@ -32,6 +32,12 @@ import type {
   VulcanVmmStatus,
 } from "./types.js";
 import {
+  ensureVulcanHostReconnectScheduled,
+  isVulcanHostConnectionUnavailable,
+  markVulcanHostConnected,
+  markVulcanHostTransportFailure,
+} from "./host-connection-state.js";
+import {
   createUnavailableResponse,
   parseJsonObject,
   type LuaSkillLifecycleRequest,
@@ -511,6 +517,10 @@ export class DynamicGrpcVulcanHostClient implements VulcanHostClient {
     method: string,
     request: Record<string, unknown>,
   ): Promise<T> {
+    if (isVulcanHostConnectionUnavailable(this.config)) {
+      ensureVulcanHostReconnectScheduled(this.config);
+      throw new Error(`vulcan-host is currently disconnected from ${normalizeGrpcEndpoint(this.config.endpoint)}.`);
+    }
     const fn = client[method];
     if (typeof fn !== "function") {
       throw new Error(`vulcan-host gRPC method not found: ${method}`);
@@ -518,9 +528,11 @@ export class DynamicGrpcVulcanHostClient implements VulcanHostClient {
     return await new Promise<T>((resolve, reject) => {
       fn.call(client, request, (error, response) => {
         if (error) {
+          markVulcanHostTransportFailure(this.config, error);
           reject(error);
           return;
         }
+        markVulcanHostConnected(this.config);
         resolve(response as T);
       });
     });

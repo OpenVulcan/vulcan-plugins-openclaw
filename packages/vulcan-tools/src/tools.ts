@@ -2,11 +2,15 @@
 // 本文件定义 Vulcan LuaSkills OpenClaw 插件的工具。
 
 import {
+  buildVulcanCapabilityUnavailableMessage,
   buildToolHostContext,
   createVulcanHostClient,
+  ensureVulcanHostReconnectScheduled,
   errorToolResult,
+  isVulcanHostConnectionUnavailable,
+  isVulcanHostTransportError,
   normalizeVulcanToolResult,
-  unavailableFromError,
+  peekVulcanHostConnectionSnapshot,
   type JsonObject,
   type ResolvedVulcanConfig,
   type VulcanToolDescriptor,
@@ -59,6 +63,36 @@ interface CreateGeneratedLuaSkillToolParams extends CreateLuaSkillDispatcherTool
   descriptor: VulcanToolDescriptor;
 }
 
+// LUASKILLS_UNAVAILABLE_MESSAGE keeps one stable failure text for all LuaSkills dispatch surfaces while vulcan-host reconnects.
+// LUASKILLS_UNAVAILABLE_MESSAGE 为 vulcan-host 重连期间的所有 LuaSkills 调度表面保留一条稳定失败文本。
+const LUASKILLS_UNAVAILABLE_MESSAGE = buildVulcanCapabilityUnavailableMessage("luaskills");
+
+// failFastWhenLuaSkillsDisconnected returns one immediate error result when shared host state is already degraded.
+// failFastWhenLuaSkillsDisconnected 会在共享 host 状态已降级时立即返回错误结果。
+function failFastWhenLuaSkillsDisconnected(params: CreateLuaSkillDispatcherToolParams) {
+  if (!isVulcanHostConnectionUnavailable(params.config)) {
+    return null;
+  }
+  ensureVulcanHostReconnectScheduled(params.config, { logger: params.api.logger });
+  params.api.logger.debug?.(
+    `vulcan-tools: ${peekVulcanHostConnectionSnapshot(params.config).target} is reconnecting; fail fast for LuaSkills tool call.`,
+  );
+  return errorToolResult(LUASKILLS_UNAVAILABLE_MESSAGE);
+}
+
+// mapLuaSkillsTransportError converts transport failures into one stable unavailable result while keeping business errors untouched.
+// mapLuaSkillsTransportError 会把传输失败转换成稳定的不可用结果，同时保留业务错误原文。
+function mapLuaSkillsTransportError(
+  params: CreateLuaSkillDispatcherToolParams,
+  error: unknown,
+) {
+  if (!isVulcanHostTransportError(error)) {
+    return null;
+  }
+  ensureVulcanHostReconnectScheduled(params.config, { logger: params.api.logger, force: true });
+  return errorToolResult(LUASKILLS_UNAVAILABLE_MESSAGE);
+}
+
 // createLuaSkillDispatcherTool creates a fallback dynamic LuaSkills dispatcher tool.
 // createLuaSkillDispatcherTool 创建一个降级用的 LuaSkills 动态 dispatcher 工具。
 export function createLuaSkillDispatcherTool(
@@ -78,6 +112,10 @@ export function createLuaSkillDispatcherTool(
       if (!input) {
         return errorToolResult("toolName is required and must be a non-empty string.");
       }
+      const unavailable = failFastWhenLuaSkillsDisconnected(params);
+      if (unavailable) {
+        return unavailable;
+      }
 
       // Forward only after OpenClaw context has been converted, so AI never supplies session ids manually.
       // 只有在转换 OpenClaw 上下文后才转发，确保 AI 永远不需要手动提供 session id。
@@ -91,7 +129,11 @@ export function createLuaSkillDispatcherTool(
         return normalizeVulcanToolResult(response);
       } catch (error) {
         params.api.logger.warn?.(`vulcan-tools: LuaSkill dispatcher failed: ${String(error)}`);
-        return normalizeVulcanToolResult(unavailableFromError(error));
+        const unavailable = mapLuaSkillsTransportError(params, error);
+        if (unavailable) {
+          return unavailable;
+        }
+        return errorToolResult(error instanceof Error ? error.message : String(error));
       }
     },
   };
@@ -114,6 +156,10 @@ export function createGeneratedLuaSkillTool(
     parameters: params.descriptor.inputSchema,
     async execute(_toolCallId, rawParams) {
       const args = readGeneratedLuaSkillParams(rawParams);
+      const unavailable = failFastWhenLuaSkillsDisconnected(params);
+      if (unavailable) {
+        return unavailable;
+      }
 
       // Per-tool proxies preserve AI-facing schemas while still injecting trusted OpenClaw context here.
       // per-tool 代理保留面向 AI 的 schema，同时仍在这里注入受信任的 OpenClaw 上下文。
@@ -129,7 +175,11 @@ export function createGeneratedLuaSkillTool(
         params.api.logger.warn?.(
           `vulcan-tools: generated LuaSkill tool failed (${params.descriptor.name}): ${String(error)}`,
         );
-        return normalizeVulcanToolResult(unavailableFromError(error));
+        const unavailable = mapLuaSkillsTransportError(params, error);
+        if (unavailable) {
+          return unavailable;
+        }
+        return errorToolResult(error instanceof Error ? error.message : String(error));
       }
     },
   };

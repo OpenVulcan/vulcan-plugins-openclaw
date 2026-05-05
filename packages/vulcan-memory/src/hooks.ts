@@ -4,7 +4,12 @@
 import {
   buildHookHostContext,
   createVulcanHostClient,
+  ensureVulcanHostReconnectScheduled,
+  isVulcanHostConnectionUnavailable,
+  isVulcanHostTransportError,
+  peekVulcanHostConnectionSnapshot,
   type ResolvedVulcanConfig,
+  type VulcanHostConnectionSnapshot,
   type VulcanHostContext,
   type VulcanVmmMemorySearchHit,
   type VulcanVmmTurnTimelineItem,
@@ -17,10 +22,12 @@ import {
   deleteSessionMemoryState,
   getOrCreateSessionMemoryState,
   incrementCommittedTurnCount,
+  markDisconnectNoticeInjected,
   markSessionTurn,
   peekActiveRecallLines,
   replaceActiveRecall,
   startSessionMemoryState,
+  shouldInjectDisconnectNotice,
   type VulcanProfileBundleState,
   type VulcanSessionMemoryState,
 } from "./session-state.js";
@@ -168,6 +175,11 @@ async function handleBeforePromptBuild(
   const sessionState = sessionStateKey ? getOrCreateSessionMemoryState(sessionStateKey) : undefined;
   const openedNewTurn =
     sessionState && turnKey ? markSessionTurn(sessionState, turnKey) : sessionState ? false : true;
+  if (isVulcanHostConnectionUnavailable(config)) {
+    const snapshot = peekVulcanHostConnectionSnapshot(config);
+    ensureVulcanHostReconnectScheduled(config, { logger: api.logger });
+    return buildDisconnectedHostInjection(sessionState, snapshot);
+  }
 
   try {
     const client = createVulcanHostClient(config);
@@ -220,6 +232,10 @@ async function handleBeforePromptBuild(
     };
   } catch (error) {
     api.logger.warn?.(`vulcan-memory: before_prompt_build injection skipped: ${String(error)}`);
+    if (isVulcanHostTransportError(error)) {
+      ensureVulcanHostReconnectScheduled(config, { logger: api.logger, force: true });
+      return buildDisconnectedHostInjection(sessionState, peekVulcanHostConnectionSnapshot(config));
+    }
     return undefined;
   }
 }
@@ -238,6 +254,10 @@ async function handleAfterCompaction(
   const eventRecord = asRecord(event);
   const compactedCount = readFiniteNumber(eventRecord.compactedCount, 0);
   if (compactedCount <= 0) {
+    return;
+  }
+  if (isVulcanHostConnectionUnavailable(config)) {
+    ensureVulcanHostReconnectScheduled(config, { logger: api.logger });
     return;
   }
   try {
@@ -271,6 +291,10 @@ async function handleAfterCompaction(
       api.logger.warn?.("vulcan-memory: ChatCompact request was rejected by VMM.");
     }
   } catch (error) {
+    if (isVulcanHostTransportError(error)) {
+      ensureVulcanHostReconnectScheduled(config, { logger: api.logger, force: true });
+      return;
+    }
     api.logger.warn?.(`vulcan-memory: after_compaction sync skipped: ${String(error)}`);
   }
 }
@@ -297,6 +321,10 @@ async function handleAgentEnd(
   const sessionState = sessionStateKey ? getOrCreateSessionMemoryState(sessionStateKey) : undefined;
   if (sessionState) {
     incrementCommittedTurnCount(sessionState);
+  }
+  if (isVulcanHostConnectionUnavailable(config)) {
+    ensureVulcanHostReconnectScheduled(config, { logger: api.logger });
+    return;
   }
 
   try {
@@ -352,8 +380,31 @@ async function handleAgentEnd(
       api.logger.warn?.("vulcan-memory: postaction request was rejected by VMM.");
     }
   } catch (error) {
+    if (isVulcanHostTransportError(error)) {
+      ensureVulcanHostReconnectScheduled(config, { logger: api.logger, force: true });
+      return;
+    }
     api.logger.warn?.(`vulcan-memory: postaction write skipped: ${String(error)}`);
   }
+}
+
+// buildDisconnectedHostInjection injects one bounded warning turn so the model can notify the user when Vulcan is temporarily offline.
+// buildDisconnectedHostInjection 在 Vulcan 暂时离线时注入一条有界警示，让模型能通知用户当前服务失联。
+function buildDisconnectedHostInjection(
+  state: VulcanSessionMemoryState | undefined,
+  snapshot: VulcanHostConnectionSnapshot,
+): { prependContext: string } | undefined {
+  if (!shouldInjectDisconnectNotice(state, snapshot.disconnectEpoch, snapshot.target)) {
+    return undefined;
+  }
+  markDisconnectNoticeInjected(state, snapshot.disconnectEpoch, snapshot.target);
+  return {
+    prependContext: [
+      "Vulcan 服务当前失联。",
+      "本轮不要依赖 Vulcan 记忆或 LuaSkills 工具。",
+      "请直接告知用户当前 Vulcan 服务未启动或暂不可达，并建议稍后重试。",
+    ].join("\n"),
+  };
 }
 
 // buildCachedInjectionOnScopeFailure reuses only safe cached profile/recall state when runtime scope resolution transiently fails.
@@ -457,6 +508,9 @@ async function buildProfileBundleInjection(params: {
         };
       }
     } catch (error) {
+      if (isVulcanHostTransportError(error)) {
+        throw error;
+      }
       params.api.logger.warn?.(`vulcan-memory: profile bundle fetch skipped: ${String(error)}`);
       if (cachedBundle?.signature !== signature && params.state) {
         params.state.profileBundle = undefined;
