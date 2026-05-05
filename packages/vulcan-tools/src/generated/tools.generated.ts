@@ -674,10 +674,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     "entryName": "delete",
     "inputSchema": {
       "properties": {
-        "LUASKILL_SID": {
-          "description": "Standard LuaSkills managed identity field. Must be a single-line string from 20 to 128 characters.",
-          "type": "string"
-        },
         "tags": {
           "description": "Tag string array to delete. Each tag uses lowercase letters, digits, `_`, or `-`, maximum 96 characters, and must start and end with a letter or digit.",
           "type": "array"
@@ -688,7 +684,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
         }
       },
       "required": [
-        "LUASKILL_SID",
         "task_name",
         "tags"
       ],
@@ -710,10 +705,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     "entryName": "get",
     "inputSchema": {
       "properties": {
-        "LUASKILL_SID": {
-          "description": "Standard LuaSkills managed identity field. Must be a single-line string from 20 to 128 characters.",
-          "type": "string"
-        },
         "tags": {
           "description": "Optional tag string array to read. Each tag uses lowercase letters, digits, `_`, or `-`, maximum 96 characters, and must start and end with a letter or digit. When omitted, returns a latest compact node preview of up to 8 nodes.",
           "type": "array"
@@ -724,7 +715,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
         }
       },
       "required": [
-        "LUASKILL_SID",
         "task_name"
       ],
       "type": "object"
@@ -745,17 +735,12 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     "entryName": "get-all",
     "inputSchema": {
       "properties": {
-        "LUASKILL_SID": {
-          "description": "Standard LuaSkills managed identity field. Must be a single-line string from 20 to 128 characters.",
-          "type": "string"
-        },
         "task_name": {
           "description": "Stable task name for task-scoped memory. Maximum length: 96 characters. Use lowercase letters, digits, `_`, or `-`; must start and end with a letter or digit.",
           "type": "string"
         }
       },
       "required": [
-        "LUASKILL_SID",
         "task_name"
       ],
       "type": "object"
@@ -776,10 +761,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     "entryName": "list",
     "inputSchema": {
       "properties": {
-        "LUASKILL_SID": {
-          "description": "Standard LuaSkills managed identity field. Must be a single-line string from 20 to 128 characters.",
-          "type": "string"
-        },
         "tag_prefix": {
           "description": "Optional tag prefix filter, for example `progress-`. Use lowercase letters, digits, `_`, or `-`; maximum 96 characters; must start with a letter or digit.",
           "type": "string"
@@ -794,7 +775,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
         }
       },
       "required": [
-        "LUASKILL_SID",
         "task_name"
       ],
       "type": "object"
@@ -823,17 +803,12 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
           "description": "Node array to write. Maximum 30 nodes. Each item must be an object with `tag` (max 96 chars, lowercase letters/digits/`_`/`-`, must start and end with a letter or digit), `type` (`note`, `file_summary`, `decision`, `todo`, `progress`, `risk`, `checkpoint`, or `tool_result`), `title` (max 160 chars), and `content` (max 2000 chars).",
           "type": "array"
         },
-        "LUASKILL_SID": {
-          "description": "Standard LuaSkills managed identity field. Must be a single-line string from 20 to 128 characters.",
-          "type": "string"
-        },
         "task_name": {
           "description": "Stable task name for task-scoped memory. Maximum length: 96 characters. Use lowercase letters, digits, `_`, or `-`; must start and end with a letter or digit.",
           "type": "string"
         }
       },
       "required": [
-        "LUASKILL_SID",
         "task_name",
         "list"
       ],
@@ -851,21 +826,16 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
       "readOnlyHint": true,
       "userConfirmationRequired": false
     },
-    "description": "Close one WorkMem task and remove its task-scoped nodes without invalidating the long-lived LUASKILL_SID.",
+    "description": "Close one WorkMem task and remove its task-scoped nodes.",
     "entryName": "task-close",
     "inputSchema": {
       "properties": {
-        "LUASKILL_SID": {
-          "description": "Standard LuaSkills managed identity field. Must be a single-line string from 20 to 128 characters.",
-          "type": "string"
-        },
         "task_name": {
           "description": "Stable task name for task-scoped memory. Maximum length: 96 characters. Use lowercase letters, digits, `_`, or `-`; must start and end with a letter or digit.",
           "type": "string"
         }
       },
       "required": [
-        "LUASKILL_SID",
         "task_name"
       ],
       "type": "object"
@@ -882,16 +852,12 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
       "readOnlyHint": true,
       "userConfirmationRequired": false
     },
-    "description": "Create or resume one project-scoped WorkMem task. Use this at the start of a remembered task with an existing LUASKILL_SID, or omit LUASKILL_SID to generate a new public identity. After every create call, visibly tell the user the current LUASKILL_SID when it is not host-managed.",
+    "description": "Create or resume one project-scoped WorkMem task.",
     "entryName": "task-create",
     "inputSchema": {
       "properties": {
         "detail": {
           "description": "Short task detail: goal, boundary, known focus, and current starting point. Maximum length: 1200 characters.",
-          "type": "string"
-        },
-        "LUASKILL_SID": {
-          "description": "Optional standard LuaSkills managed identity field. Omit this only when task-create should generate a new public identity. Caller-provided values must be single-line strings from 20 to 128 characters.",
           "type": "string"
         },
         "task_name": {
@@ -917,18 +883,10 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
       "readOnlyHint": true,
       "userConfirmationRequired": false
     },
-    "description": "List all remembered WorkMem tasks under one LUASKILL_SID.",
+    "description": "List all remembered WorkMem tasks.",
     "entryName": "task-list",
     "inputSchema": {
-      "properties": {
-        "LUASKILL_SID": {
-          "description": "Standard LuaSkills managed identity field. Must be a single-line string from 20 to 128 characters.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "LUASKILL_SID"
-      ],
+      "properties": {},
       "type": "object"
     },
     "name": "vulcan-workmem-task-list",
