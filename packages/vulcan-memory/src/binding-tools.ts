@@ -17,6 +17,7 @@ import {
   setPersistedAgentProjectId,
   setPersistedDefaultProjectId,
   setPersistedDefaultUserId,
+  shouldExposeVulcanToolSurface,
   type JsonObject,
   type JsonValue,
   type ResolvedVulcanConfig,
@@ -172,6 +173,13 @@ export function createVulcanBindingTool(
   params: BindingToolParams,
 ): AnyAgentTool | null {
   if (!params.config.enabled || !params.config.memory.enabled) {
+    return null;
+  }
+  if (!shouldExposeVulcanToolSurface({
+    runtimeConfig: resolveToolRuntimeConfig(params.ctx),
+    agentId: params.ctx.agentId,
+    surface: "binding-admin",
+  })) {
     return null;
   }
   const descriptor = resolveBindingToolDescriptor(toolName);
@@ -663,4 +671,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 // isBindingToolName 将宽松 descriptor 名称收窄为当前宿主适配器理解的单一精简绑定工具 ID。
 function isBindingToolName(value: string): value is BindingToolName {
   return value === VULCAN_BIND_TOOL_NAME;
+}
+
+// resolveToolRuntimeConfig prefers the eager runtime config and falls back to the lazy getter used by some OpenClaw tool paths.
+// resolveToolRuntimeConfig 优先使用即时 runtime config，并回退到部分 OpenClaw 工具路径提供的惰性 getter。
+function resolveToolRuntimeConfig(ctx: OpenClawPluginToolContext): unknown {
+  return ctx.runtimeConfig ?? ctx.getRuntimeConfig?.();
 }

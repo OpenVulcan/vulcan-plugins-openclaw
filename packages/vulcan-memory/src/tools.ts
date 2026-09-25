@@ -11,6 +11,7 @@ import {
   isVulcanHostTransportError,
   jsonToolResult,
   peekVulcanHostConnectionSnapshot,
+  shouldExposeVulcanToolSurface,
   textToolResult,
   type JsonValue,
   type ResolvedVulcanConfig,
@@ -25,6 +26,7 @@ import {
   formatVulcanMemorySearchText,
   formatVulcanTurnDetailsText,
   getOrCreateVulcanMemoryManager,
+  deleteVulcanMemoryEntries,
   loadVulcanTurnDetails,
   searchVulcanMemoryEntries,
 } from "./manager.js";
@@ -124,6 +126,33 @@ const CompatMemoryGetSchema = {
   required: ["turnIds"],
 } as const;
 
+// CompatMemoryDeleteSchema serves the primary Vulcan-native explicit memory-delete surface exposed to OpenClaw models.
+// CompatMemoryDeleteSchema 作为 OpenClaw 模型可见的主 Vulcan 原生明确删记忆表面。
+const CompatMemoryDeleteSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    memoryIds: {
+      type: "array",
+      description:
+        "Exact durable memory_id strings to delete. Use only ids returned by vulcan_memory_search or PreCheck VMM_ID markers; never use turn_id/source_turn_id.",
+      items: {
+        type: "string",
+        pattern: "^[1-9][0-9]*$",
+      },
+      minItems: 1,
+      maxItems: 16,
+    },
+    reason: {
+      type: "string",
+      description:
+        "Required audit reason. Use this only after the user explicitly asks to delete, remove, or replace the specific remembered information.",
+      minLength: 1,
+    },
+  },
+  required: ["memoryIds", "reason"],
+} as const;
+
 // CANONICAL_MEMORY_SEARCH_TOOL is the legacy bridge memory_search descriptor synchronized from vulcan-host.
 // CANONICAL_MEMORY_SEARCH_TOOL 是从 vulcan-host 同步下来的旧式桥接 memory_search 描述符。
 const CANONICAL_MEMORY_SEARCH_TOOL = "memory_search";
@@ -139,6 +168,10 @@ const COMPAT_MEMORY_SEARCH_TOOL = "vulcan_memory_search";
 // COMPAT_MEMORY_GET_TOOL is the primary Vulcan-native grouped read descriptor synchronized from vulcan-host.
 // COMPAT_MEMORY_GET_TOOL 是从 vulcan-host 同步下来的主 Vulcan 原生分组读取描述符。
 const COMPAT_MEMORY_GET_TOOL = "vulcan_memory_get";
+
+// COMPAT_MEMORY_DELETE_TOOL is the primary Vulcan-native grouped delete descriptor synchronized from vulcan-host.
+// COMPAT_MEMORY_DELETE_TOOL 是从 vulcan-host 同步下来的主 Vulcan 原生分组删除描述符。
+const COMPAT_MEMORY_DELETE_TOOL = "vmm_memory_delete";
 
 // CreateMemoryToolParams groups dependencies needed to construct OpenClaw memory tools.
 // CreateMemoryToolParams 汇总构造 OpenClaw 记忆工具所需的依赖。
@@ -182,6 +215,13 @@ function mapMemoryTransportError(
 // createMemorySearchTool 创建由 VMM 支撑的可选桥接 memory_search 工具。
 export function createMemorySearchTool(params: CreateMemoryToolParams): AnyAgentTool | null {
   if (!params.config.enabled || !params.config.memory.enabled) {
+    return null;
+  }
+  if (!shouldExposeVulcanToolSurface({
+    runtimeConfig: resolveToolRuntimeConfig(params.ctx),
+    agentId: params.ctx.agentId,
+    surface: "memory-bridge",
+  })) {
     return null;
   }
   return {
@@ -250,6 +290,13 @@ export function createMemoryGetTool(params: CreateMemoryToolParams): AnyAgentToo
   if (!params.config.enabled || !params.config.memory.enabled) {
     return null;
   }
+  if (!shouldExposeVulcanToolSurface({
+    runtimeConfig: resolveToolRuntimeConfig(params.ctx),
+    agentId: params.ctx.agentId,
+    surface: "memory-bridge",
+  })) {
+    return null;
+  }
   return {
     name: "memory_get",
     label: "Legacy Memory Get",
@@ -311,6 +358,13 @@ export function createVulcanMemorySearchTool(params: CreateMemoryToolParams): An
   if (!params.config.enabled || !params.config.memory.enabled) {
     return null;
   }
+  if (!shouldExposeVulcanToolSurface({
+    runtimeConfig: resolveToolRuntimeConfig(params.ctx),
+    agentId: params.ctx.agentId,
+    surface: "memory-native",
+  })) {
+    return null;
+  }
   return {
     name: "vulcan_memory_search",
     label: "Vulcan Memory Search",
@@ -362,6 +416,13 @@ export function createVulcanMemoryGetTool(params: CreateMemoryToolParams): AnyAg
   if (!params.config.enabled || !params.config.memory.enabled) {
     return null;
   }
+  if (!shouldExposeVulcanToolSurface({
+    runtimeConfig: resolveToolRuntimeConfig(params.ctx),
+    agentId: params.ctx.agentId,
+    surface: "memory-native",
+  })) {
+    return null;
+  }
   return {
     name: "vulcan_memory_get",
     label: "Vulcan Memory Get",
@@ -389,6 +450,71 @@ export function createVulcanMemoryGetTool(params: CreateMemoryToolParams): AnyAg
         return textToolResult(formatVulcanTurnDetailsText(turns), { turns });
       } catch (error) {
         params.api.logger.warn?.(`vulcan-memory: grouped get failed: ${String(error)}`);
+        const unavailable = mapMemoryTransportError(params, error);
+        if (unavailable) {
+          return unavailable;
+        }
+        return errorToolResult(error instanceof Error ? error.message : String(error));
+      }
+    },
+  };
+}
+
+// createVulcanMemoryDeleteTool creates the primary Vulcan-native explicit memory delete tool exposed to OpenClaw models.
+// createVulcanMemoryDeleteTool 创建对 OpenClaw 模型暴露的主 Vulcan 原生明确删记忆工具。
+export function createVulcanMemoryDeleteTool(params: CreateMemoryToolParams): AnyAgentTool | null {
+  if (!params.config.enabled || !params.config.memory.enabled) {
+    return null;
+  }
+  if (!shouldExposeVulcanToolSurface({
+    runtimeConfig: resolveToolRuntimeConfig(params.ctx),
+    agentId: params.ctx.agentId,
+    surface: "memory-native",
+  })) {
+    return null;
+  }
+  return {
+    name: "vmm_memory_delete",
+    label: "VMM Memory Delete",
+    description: resolveGeneratedDescription(
+      COMPAT_MEMORY_DELETE_TOOL,
+      "Delete explicit durable Vulcan memories only after the user clearly asks to delete, remove, or replace specific remembered information. This tool requires exact memory_id values from vulcan_memory_search or PreCheck VMM_ID markers; never delete by turn_id/source_turn_id, never infer ids from text, and never use it for broad cleanup.",
+    ),
+    parameters: resolveGeneratedSchema(COMPAT_MEMORY_DELETE_TOOL, CompatMemoryDeleteSchema),
+    async execute(_toolCallId, rawParams) {
+      const input = readCompatDeleteParams(rawParams);
+      if (!input) {
+        return errorToolResult("memoryIds must be non-empty decimal memory_id strings and reason must be non-empty.");
+      }
+      const unavailable = failFastWhenHostDisconnected(params);
+      if (unavailable) {
+        return unavailable;
+      }
+      try {
+        const client = createVulcanHostClient(params.config);
+        const response = await deleteVulcanMemoryEntries({
+          client,
+          config: params.config,
+          context: buildToolHostContext(params.ctx, params.config),
+          memoryIds: input.memoryIds,
+          reason: input.reason,
+        });
+        if ("error" in response) {
+          return errorToolResult(response.error);
+        }
+        return textToolResult(
+          [
+            `deleted_memory_ids: ${response.deletedMemoryIds.join(", ") || "none"}`,
+            `not_found_memory_ids: ${response.notFoundMemoryIds.join(", ") || "none"}`,
+            `deleted_vector_rows: ${response.deletedVectorRows}`,
+            response.traceId ? `trace_id: ${response.traceId}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          response,
+        );
+      } catch (error) {
+        params.api.logger.warn?.(`vulcan-memory: explicit delete failed: ${String(error)}`);
         const unavailable = mapMemoryTransportError(params, error);
         if (unavailable) {
           return unavailable;
@@ -474,6 +600,19 @@ function readCompatGetParams(value: unknown): { turnIds: string[] } | null {
   return { turnIds };
 }
 
+// readCompatDeleteParams validates explicit VMM memory delete input.
+// readCompatDeleteParams 校验明确 VMM 记忆删除输入。
+function readCompatDeleteParams(value: unknown): { memoryIds: string[]; reason: string } | null {
+  const record = asRecord(value);
+  const memoryIds = Array.isArray(record.memoryIds)
+    ? record.memoryIds
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter((entry) => /^[1-9][0-9]*$/.test(entry))
+    : [];
+  const reason = typeof record.reason === "string" ? record.reason.trim() : "";
+  return memoryIds.length > 0 && reason ? { memoryIds, reason } : null;
+}
+
 // resolveCanonicalSources narrows the canonical corpus selector to the VMM-backed source groups the native manager can serve.
 // resolveCanonicalSources 把 canonical corpus 选择器收窄成原生 manager 可服务的 VMM 来源分组。
 function resolveCanonicalSources(corpus: string | undefined): Array<"memory" | "sessions"> | undefined {
@@ -492,6 +631,12 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+// resolveToolRuntimeConfig prefers the eager runtime config and falls back to the lazy getter used by some OpenClaw tool paths.
+// resolveToolRuntimeConfig 优先使用即时 runtime config，并回退到部分 OpenClaw 工具路径提供的惰性 getter。
+function resolveToolRuntimeConfig(ctx: OpenClawPluginToolContext): unknown {
+  return ctx.runtimeConfig ?? ctx.getRuntimeConfig?.();
 }
 
 // findGeneratedDescriptor locates the canonical VMM descriptor synchronized from vulcan-host.

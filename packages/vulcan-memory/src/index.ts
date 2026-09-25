@@ -16,6 +16,7 @@ import {
 import {
   createMemoryGetTool,
   createMemorySearchTool,
+  createVulcanMemoryDeleteTool,
   createVulcanMemoryGetTool,
   createVulcanMemorySearchTool,
 } from "./tools.js";
@@ -43,6 +44,9 @@ export default definePluginEntry({
     });
     api.registerTool((ctx) => createVulcanMemoryGetTool({ api, config, ctx }), {
       name: "vulcan_memory_get",
+    });
+    api.registerTool((ctx) => createVulcanMemoryDeleteTool({ api, config, ctx }), {
+      name: "vmm_memory_delete",
     });
 
     // Keep canonical OpenClaw memory_search/memory_get only as optional bridge tools for hosts or workflows that still need the standard names.

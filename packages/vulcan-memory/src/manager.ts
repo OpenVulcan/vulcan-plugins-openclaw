@@ -10,6 +10,7 @@ import {
   type ResolvedVulcanConfig,
   type VulcanHostClient,
   type VulcanHostContext,
+  type VulcanVmmDeleteMemoriesResponse,
   type VulcanVmmMemorySearchHit,
   type VulcanVmmTurnDetailEntry,
 } from "@vulcan-plugins-openclaw/shared";
@@ -190,6 +191,34 @@ export async function searchVulcanMemoryEntries(params: {
     scope: resolved.scope,
     hitsByQuery: response.results.map((group) => ({ query: group.query, hits: group.hits })),
   };
+}
+
+// deleteVulcanMemoryEntries deletes exact durable memory ids after resolving the current VMM scope.
+// deleteVulcanMemoryEntries 会在解析当前 VMM 范围后删除精确的长期 memory id。
+export async function deleteVulcanMemoryEntries(params: {
+  client: VulcanHostClient;
+  config: ResolvedVulcanConfig;
+  context: VulcanHostContext;
+  memoryIds: string[];
+  reason: string;
+}): Promise<VulcanVmmDeleteMemoriesResponse | { error: string }> {
+  const resolved = await resolveVulcanMemoryScope({
+    client: params.client,
+    config: params.config,
+    context: params.context,
+    requireSession: false,
+    purpose: "delete",
+  });
+  if (!("scope" in resolved)) {
+    return { error: resolved.error };
+  }
+  return params.client.deleteVmmMemories({
+    context: params.context,
+    userId: resolved.scope.user.userId,
+    projectId: resolved.scope.project.projectId,
+    memoryIds: params.memoryIds,
+    reason: params.reason,
+  });
 }
 
 // loadVulcanTurnDetails loads source-turn details directly from VMM and returns them in stable order.

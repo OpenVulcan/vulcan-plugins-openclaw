@@ -289,6 +289,16 @@ export interface VulcanVmmPrecheckContextItem {
   turnId: string;
   hasDialogue: boolean;
   createdDatetime: string;
+  memoryId: string;
+}
+
+// VulcanVmmDeleteMemoriesResponse carries the audited result of one explicit durable-memory delete batch.
+// VulcanVmmDeleteMemoriesResponse 承载一次明确长期记忆删除批次的审计结果。
+export interface VulcanVmmDeleteMemoriesResponse {
+  deletedMemoryIds: string[];
+  notFoundMemoryIds: string[];
+  deletedVectorRows: string;
+  traceId?: string | undefined;
 }
 
 // VulcanVmmPrecheckResponse carries the injection decision for one OpenClaw pre-prompt pass.

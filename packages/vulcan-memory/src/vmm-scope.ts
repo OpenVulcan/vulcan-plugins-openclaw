@@ -50,7 +50,7 @@ export async function resolveVulcanMemoryScope(params: {
   config: ResolvedVulcanConfig;
   context: VulcanHostContext;
   requireSession: boolean;
-  purpose: "manager" | "search" | "precheck" | "profile" | "compact" | "postaction" | "status";
+  purpose: "manager" | "search" | "delete" | "precheck" | "profile" | "compact" | "postaction" | "status";
 }): Promise<VulcanResolvedMemoryScopeResult> {
   const runtime = await params.client.buildHostAdapterRuntime(params.context);
   const sessionId = runtime.sessionId ?? runtime.workmemId ?? params.context.sessionId ?? params.context.sessionKey;

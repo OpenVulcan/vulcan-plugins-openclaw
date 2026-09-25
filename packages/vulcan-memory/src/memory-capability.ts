@@ -58,8 +58,11 @@ function buildVulcanMemoryPrompt(
     return [];
   }
   if (availableTools.has("vulcan_memory_search")) {
+    const deleteGuidance = availableTools.has("vmm_memory_delete")
+      ? " Use `vmm_memory_delete` only after the user explicitly asks to delete, remove, or replace specific remembered information, and only with exact memory_id values from search or PreCheck VMM_ID markers; never delete by turn_id/source_turn_id."
+      : "";
     return [
-      "Vulcan memory owns the active OpenClaw memory slot. Use `vulcan_memory_search` before answering when prior project facts, decisions, requirements, bugs, user preferences, or source-turn context may matter. Use `vulcan_memory_get` when grouped recall results expose one or more non-zero source_turn_id values and you need structured turn details. Treat `memory_search` and `memory_get` only as legacy bridge tools when one workflow still requires the standard OpenClaw names.",
+      `Vulcan memory owns the active OpenClaw memory slot. Use \`vulcan_memory_search\` before answering when prior project facts, decisions, requirements, bugs, user preferences, or source-turn context may matter. Use \`vulcan_memory_get\` when grouped recall results expose one or more non-zero source_turn_id values and you need structured turn details.${deleteGuidance} Treat \`memory_search\` and \`memory_get\` only as legacy bridge tools when one workflow still requires the standard OpenClaw names.`,
     ];
   }
   if (!availableTools.has("memory_search")) {

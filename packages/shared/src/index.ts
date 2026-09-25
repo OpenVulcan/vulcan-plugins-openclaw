@@ -8,5 +8,6 @@ export * from "./generation.js";
 export * from "./host-connection-state.js";
 export * from "./grpc-vulcan-host-client.js";
 export * from "./results.js";
+export * from "./tool-profile.js";
 export * from "./types.js";
 export * from "./vulcan-host-client.js";

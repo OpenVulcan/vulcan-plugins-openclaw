@@ -8,6 +8,7 @@ import type {
   ResolvedVulcanConfig,
   VulcanHostContext,
   VulcanVmmChatCompactResponse,
+  VulcanVmmDeleteMemoriesResponse,
   VulcanVmmListProjectsResponse,
   VulcanVmmListUsersResponse,
   VulcanVmmMemorySearchResponse,
@@ -82,6 +83,13 @@ export interface VulcanHostClient {
     queries: string[];
     topK: number;
   }): Promise<VulcanVmmMemorySearchResponse>;
+  deleteVmmMemories(params: {
+    context: VulcanHostContext;
+    userId: string;
+    projectId: string;
+    memoryIds: string[];
+    reason: string;
+  }): Promise<VulcanVmmDeleteMemoriesResponse>;
   getVmmTurnDetails(params: {
     context: VulcanHostContext;
     turnIds: string[];

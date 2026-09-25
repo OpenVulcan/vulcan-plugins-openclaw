@@ -12,6 +12,7 @@ import {
   type VulcanHostConnectionSnapshot,
   type VulcanHostContext,
   type VulcanVmmMemorySearchHit,
+  type VulcanVmmPrecheckContextItem,
   type VulcanVmmTurnTimelineItem,
 } from "@vulcan-plugins-openclaw/shared";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
@@ -664,7 +665,7 @@ async function fetchFreshRecallLines(params: {
     if (!response.shouldInject || response.contextItems.length === 0) {
       return [];
     }
-    return dedupeTextLines(response.contextItems.map((item) => item.text));
+    return dedupeTextLines(response.contextItems.map((item) => formatPrecheckRecallItem(item)));
   }
 
   // Some host runs still lack a stable session identity, so grouped search remains the safe degraded recall path.
@@ -695,10 +696,37 @@ function buildFallbackRecallItems(
       if (!summary) {
         continue;
       }
-      items.push(`[${group.query}] ${summary}`);
+      items.push(`[${group.query}|${formatVmmIdLabel(hit.memoryId, hit.sourceTurnId)}] ${summary}`);
     }
   }
   return dedupeTextLines(items);
+}
+
+// formatPrecheckRecallItem keeps one actionable memory id beside the backend-provided recall text.
+// formatPrecheckRecallItem 会把可操作 memory id 与后端提供的召回文本放在一起。
+function formatPrecheckRecallItem(item: VulcanVmmPrecheckContextItem): string {
+  const summary = compactInline(item.text);
+  if (!summary) {
+    return "";
+  }
+  return `[${formatVmmIdLabel(item.memoryId, item.turnId)}|SOURCE:${item.score.toFixed(3)}${
+    item.createdDatetime ? `|TIME:${item.createdDatetime}` : ""
+  }] ${summary}`;
+}
+
+// formatVmmIdLabel renders the durable memory id as the delete-safe identifier while keeping the turn id as trace-only metadata.
+// formatVmmIdLabel 把长期 memory id 渲染为可安全删除的标识，同时仅把 turn id 作为追溯元数据保留。
+function formatVmmIdLabel(memoryId: string | undefined, turnId: string | undefined): string {
+  const normalizedMemoryId = normalizePositiveId(memoryId);
+  const normalizedTurnId = normalizePositiveId(turnId);
+  return `VMM_ID:memory_id=${normalizedMemoryId || "unavailable"};turn_id=${normalizedTurnId || "none"}`;
+}
+
+// normalizePositiveId returns one decimal positive id or an empty string when the value cannot identify VMM data.
+// normalizePositiveId 返回十进制正整数 id；当该值不能标识 VMM 数据时返回空字符串。
+function normalizePositiveId(value: string | undefined): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return /^[1-9][0-9]*$/.test(normalized) ? normalized : "";
 }
 
 // resolveSessionStateKey derives the strongest available session key used by the plugin-owned in-memory state store.

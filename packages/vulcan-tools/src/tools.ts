@@ -11,6 +11,7 @@ import {
   isVulcanHostTransportError,
   normalizeVulcanToolResult,
   peekVulcanHostConnectionSnapshot,
+  shouldExposeVulcanToolSurface,
   type JsonObject,
   type ResolvedVulcanConfig,
   type VulcanToolDescriptor,
@@ -101,6 +102,13 @@ export function createLuaSkillDispatcherTool(
   if (!params.config.enabled || !params.config.tools.enabled || !params.config.tools.dispatcherEnabled) {
     return null;
   }
+  if (!shouldExposeVulcanToolSurface({
+    runtimeConfig: resolveToolRuntimeConfig(params.ctx),
+    agentId: params.ctx.agentId,
+    surface: "luaskills",
+  })) {
+    return null;
+  }
   return {
     name: "vulcan_luaskill_call",
     label: "Vulcan LuaSkill Call",
@@ -145,6 +153,13 @@ export function createGeneratedLuaSkillTool(
   params: CreateGeneratedLuaSkillToolParams,
 ): AnyAgentTool | null {
   if (!params.config.enabled || !params.config.tools.enabled) {
+    return null;
+  }
+  if (!shouldExposeVulcanToolSurface({
+    runtimeConfig: resolveToolRuntimeConfig(params.ctx),
+    agentId: params.ctx.agentId,
+    surface: "luaskills",
+  })) {
     return null;
   }
   return {
@@ -211,4 +226,10 @@ function readGeneratedLuaSkillParams(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonObject)
     : {};
+}
+
+// resolveToolRuntimeConfig prefers the eager runtime config and falls back to the lazy getter used by some OpenClaw tool paths.
+// resolveToolRuntimeConfig 优先使用即时 runtime config，并回退到部分 OpenClaw 工具路径提供的惰性 getter。
+function resolveToolRuntimeConfig(ctx: OpenClawPluginToolContext): unknown {
+  return ctx.runtimeConfig ?? ctx.getRuntimeConfig?.();
 }

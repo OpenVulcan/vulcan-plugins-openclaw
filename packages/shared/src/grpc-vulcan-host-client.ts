@@ -12,6 +12,7 @@ import type {
   ResolvedVulcanConfig,
   VulcanHostContext,
   VulcanVmmChatCompactResponse,
+  VulcanVmmDeleteMemoriesResponse,
   VulcanVmmListProjectsResponse,
   VulcanVmmListUsersResponse,
   VulcanVmmMemorySearchGroupResult,
@@ -355,6 +356,33 @@ export class DynamicGrpcVulcanHostClient implements VulcanHostClient {
     };
   }
 
+  // deleteVmmMemories deletes explicit durable memory ids inside the resolved VMM scope.
+  // deleteVmmMemories 会在已解析 VMM 范围内删除明确指定的长期 memory id。
+  async deleteVmmMemories(params: {
+    context: VulcanHostContext;
+    userId: string;
+    projectId: string;
+    memoryIds: string[];
+    reason: string;
+  }): Promise<VulcanVmmDeleteMemoriesResponse> {
+    const response = await this.callUnary<Record<string, unknown>>(
+      this.loadServices().vmm,
+      "DeleteMemories",
+      {
+        userId: params.userId,
+        projectId: params.projectId,
+        memoryIds: params.memoryIds,
+        reason: params.reason,
+      },
+    );
+    return {
+      deletedMemoryIds: readPrimitiveArray(response.deletedMemoryIds).map(String),
+      notFoundMemoryIds: readPrimitiveArray(response.notFoundMemoryIds).map(String),
+      deletedVectorRows: String(response.deletedVectorRows ?? "0"),
+      traceId: readOptionalString(response.traceId),
+    };
+  }
+
   // getVmmTurnDetails loads structured dialogue details for one or more source turns.
   // getVmmTurnDetails 加载一条或多条 source turn 的结构化对话详情。
   async getVmmTurnDetails(params: {
@@ -450,6 +478,7 @@ export class DynamicGrpcVulcanHostClient implements VulcanHostClient {
         turnId: String(entry.turnId ?? ""),
         hasDialogue: entry.hasDialogue === true,
         createdDatetime: String(entry.createdDatetime ?? ""),
+        memoryId: String(entry.memoryId ?? ""),
       })),
       traceId: readOptionalString(response.traceId),
     };
