@@ -187,6 +187,13 @@ async function vendorSharedPackage(artifactDir, sharedPackageDir) {
     path.join(sharedNodeModulesDir, "dist"),
   );
 
+  // Copy the bundled gRPC contracts beside dist so packaged clients need no sibling checkout.
+  // 将打包的 gRPC 契约复制到 dist 旁，确保安装产物无需同级仓库。
+  await replaceDirectory(
+    path.join(sharedPackageDir, "proto"),
+    path.join(sharedNodeModulesDir, "proto"),
+  );
+
   // Preserve the shared package metadata so Node can resolve its ESM entry correctly at runtime.
   // 保留共享包元数据，确保 Node 运行时能够正确解析其 ESM 入口。
   await writeJson(path.join(sharedNodeModulesDir, "package.json"), {

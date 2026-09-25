@@ -21,6 +21,10 @@ const OPENCLAW_CONFIG_PATH = path.join(os.homedir(), ".openclaw", "openclaw.json
 // ARTIFACT_ROOT 指向 OpenClaw 插件加载器消费的 linked-install 产物目录。
 const ARTIFACT_ROOT = path.join(REPO_ROOT, "artifacts", "openclaw-linked-install");
 
+// BUNDLED_PROTO_PATH points to the protocol contract versioned with this plugin repository.
+// BUNDLED_PROTO_PATH 指向与当前插件仓库一同版本管理的协议契约。
+const BUNDLED_PROTO_PATH = path.join(REPO_ROOT, "packages", "shared", "proto", "v1", "mcp_service.proto");
+
 // VULCAN_MEMORY_ARTIFACT_PATH is the standalone artifact directory for the Vulcan memory plugin.
 // VULCAN_MEMORY_ARTIFACT_PATH 是 Vulcan memory 插件的独立产物目录。
 const VULCAN_MEMORY_ARTIFACT_PATH = path.join(ARTIFACT_ROOT, "vulcan-memory");
@@ -32,10 +36,6 @@ const VULCAN_TOOLS_ARTIFACT_PATH = path.join(ARTIFACT_ROOT, "vulcan-tools");
 // DEFAULT_ENDPOINT keeps local OpenClaw installs aligned with the current vulcan-host gRPC default.
 // DEFAULT_ENDPOINT 用于让本地 OpenClaw 安装与当前 vulcan-host gRPC 默认地址保持一致。
 const DEFAULT_ENDPOINT = "127.0.0.1:19202";
-
-// DEFAULT_PROTO_PATH points to the local proto contract used by the OpenClaw gRPC bridge.
-// DEFAULT_PROTO_PATH 指向 OpenClaw gRPC 桥接使用的本地 proto 契约文件。
-const DEFAULT_PROTO_PATH = "D:/projects/vulcan-mcp-client/proto/v1/mcp_service.proto";
 
 // PNPM_COMMAND keeps nested workspace script execution portable across Windows and POSIX.
 // PNPM_COMMAND 用于让嵌套的工作区脚本执行同时兼容 Windows 与类 Unix 环境。
@@ -170,10 +170,12 @@ function removeString(value, item) {
  *
  * @param {Record<string, unknown>} config Raw OpenClaw config object.
  * 原始 OpenClaw 配置对象。
+ * @param {string} protoPath Resolved mcp_service.proto path shared by both plugins.
+ * 两个插件共用的已解析 mcp_service.proto 路径。
  * @returns {{config: Record<string, unknown>}} Updated config object.
  * 返回更新后的配置对象。
  */
-function applyVulcanPluginConfig(config) {
+function applyVulcanPluginConfig(config, protoPath) {
   const next = { ...config };
   const plugins = isRecord(next.plugins) ? { ...next.plugins } : {};
   const entries = isRecord(plugins.entries) ? { ...plugins.entries } : {};
@@ -216,7 +218,7 @@ function applyVulcanPluginConfig(config) {
     config: {
       ...toolsConfig,
       endpoint: toolsConfig.endpoint ?? DEFAULT_ENDPOINT,
-      protoPath: toolsConfig.protoPath ?? DEFAULT_PROTO_PATH,
+      protoPath,
       host: toolsHostConfig,
       tools: toolsToolConfig,
     },
@@ -242,7 +244,7 @@ function applyVulcanPluginConfig(config) {
     config: {
       ...memoryConfig,
       endpoint: memoryConfig.endpoint ?? DEFAULT_ENDPOINT,
-      protoPath: memoryConfig.protoPath ?? DEFAULT_PROTO_PATH,
+      protoPath,
       bindings: memoryBindings,
       memory: memoryRuntime,
     },
@@ -264,6 +266,40 @@ function applyVulcanPluginConfig(config) {
   };
 
   return { config: next };
+}
+
+/**
+ * Resolve one shared proto path from the configured Vulcan plugin entries.
+ * 从已配置的 Vulcan 插件项中解析唯一共享 proto 路径。
+ *
+ * @param {Record<string, unknown>} config Parsed OpenClaw config object.
+ * 已解析的 OpenClaw 配置对象。
+ * @returns {string | undefined} The configured proto path, when present.
+ * 已配置的 proto 文件路径；未配置时返回 undefined。
+ */
+function resolveConfiguredProtoPath(config) {
+  // plugins and entries narrow the untyped OpenClaw config to its plugin registration section.
+  // plugins 与 entries 将无类型 OpenClaw 配置收窄到插件注册部分。
+  const plugins = isRecord(config.plugins) ? config.plugins : {};
+  const entries = isRecord(plugins.entries) ? plugins.entries : {};
+  // protoPaths collects only the proto settings from the two plugins that share this gRPC contract.
+  // protoPaths 只收集共享该 gRPC 契约的两个插件配置。
+  const protoPaths = ["vulcan-tools", "vulcan-memory"]
+    .map((pluginId) => {
+      // entry and pluginConfig narrow one configured plugin entry before reading its protoPath.
+      // entry 与 pluginConfig 在读取 protoPath 前收窄单个插件配置项。
+      const entry = isRecord(entries[pluginId]) ? entries[pluginId] : {};
+      const pluginConfig = isRecord(entry.config) ? entry.config : {};
+      return typeof pluginConfig.protoPath === "string" ? pluginConfig.protoPath.trim() : "";
+    })
+    .filter(Boolean);
+  // uniquePaths ensures the installer does not silently choose between conflicting plugin contracts.
+  // uniquePaths 用于避免安装器在冲突的插件协议配置之间静默猜选。
+  const uniquePaths = [...new Set(protoPaths)];
+  if (uniquePaths.length > 1) {
+    throw new Error("vulcan-tools and vulcan-memory must use the same protoPath.");
+  }
+  return uniquePaths[0];
 }
 
 /**
@@ -298,6 +334,39 @@ function shouldStopGatewayBeforePrepare() {
  * 产物、配置和 Gateway 刷新全部完成后返回。
  */
 async function main() {
+  // currentConfig lets setup reuse a path already configured by the OpenClaw operator.
+  // currentConfig 让安装流程复用 OpenClaw 操作者已配置的路径。
+  const currentConfig = await readJsonObject(OPENCLAW_CONFIG_PATH, {});
+  // configuredProtoPath follows persisted plugin config before consulting the environment.
+  // configuredProtoPath 按照先读持久插件配置、再查环境变量的顺序解析。
+  const configuredProtoPath = resolveConfiguredProtoPath(currentConfig);
+  // protoPath is the explicit schema input required by both descriptor sync and runtime gRPC loading.
+  // protoPath 是 descriptor 同步与运行时 gRPC 加载都必需的明确 schema 输入。
+  // environmentProtoPath lets an operator intentionally replace the bundled protocol contract.
+  // environmentProtoPath 允许操作者有意替换包内置协议契约。
+  const environmentProtoPath = process.env.VULCAN_HOST_PROTO_PATH?.trim();
+  // configuredProtoPath is reused only when the configured file still exists on this machine.
+  // 仅当当前机器上仍存在配置文件时才复用 configuredProtoPath。
+  const configuredProtoPathExists = configuredProtoPath && fs.existsSync(configuredProtoPath);
+  // protoPath uses a valid saved override first, then an explicit environment override, then bundled files.
+  // protoPath 依次使用有效的已存覆盖、明确环境覆盖，最后回退到包内置文件。
+  const protoPath = configuredProtoPathExists
+    ? configuredProtoPath
+    : environmentProtoPath || BUNDLED_PROTO_PATH;
+  if (configuredProtoPath && !configuredProtoPathExists && !environmentProtoPath) {
+    console.warn(`Configured protoPath is missing; migrating to the bundled contract: ${BUNDLED_PROTO_PATH}`);
+  }
+  if (!fs.existsSync(protoPath)) {
+    throw new Error(`mcp_service.proto was not found at the configured path: ${protoPath}`);
+  }
+  // vmmProtoPath must be paired with the selected MCP contract in the same protocol directory.
+  // vmmProtoPath 必须与选定的 MCP 契约文件位于同一协议目录。
+  const vmmProtoPath = path.join(path.dirname(protoPath), "vmm.proto");
+  if (!fs.existsSync(vmmProtoPath)) {
+    throw new Error(`vmm.proto was not found next to the configured mcp_service.proto: ${vmmProtoPath}`);
+  }
+  process.env.VULCAN_HOST_PROTO_PATH = protoPath;
+
   console.log("Syncing generated tool descriptors...");
   await runCommand(PNPM_COMMAND, ["sync:tools"], REPO_ROOT);
   await runCommand(PNPM_COMMAND, ["sync:memory"], REPO_ROOT);
@@ -307,8 +376,7 @@ async function main() {
 
   // Rewrite the plugin load paths before touching Gateway so renamed repositories do not leave stale artifact roots behind.
   // 在操作 Gateway 之前先重写插件加载路径，避免仓库改名后残留失效的旧产物目录。
-  const currentConfig = await readJsonObject(OPENCLAW_CONFIG_PATH, {});
-  const { config: nextConfig } = applyVulcanPluginConfig(currentConfig);
+  const { config: nextConfig } = applyVulcanPluginConfig(currentConfig, protoPath);
   await writeJsonObject(OPENCLAW_CONFIG_PATH, nextConfig);
   console.log(`Updated OpenClaw config: ${OPENCLAW_CONFIG_PATH}`);
 

@@ -4,7 +4,7 @@
 
 OpenClaw 源码已按要求强制更新到最新远端状态：
 
-- 仓库：`D:\projects\OpenClaw`
+- 仓库：`OpenClaw`
 - 分支：`main`
 - 最新提交：`feb9a5af6a fix(plugins): scope commands to channels`
 - 状态：`main...origin/main`，工作区干净
@@ -29,11 +29,11 @@ OpenClaw 插件工具需要同时满足两层条件：
 
 关键依据：
 
-- `D:\projects\OpenClaw\src\plugins\registry.ts:486` 开始处理 `registerTool`。
-- `D:\projects\OpenClaw\src\plugins\registry.ts:494` 读取 manifest 声明的工具名。
-- `D:\projects\OpenClaw\src\plugins\registry.ts:495-503` 在没有 `contracts.tools` 时拒绝注册。
-- `D:\projects\OpenClaw\src\plugins\registry.ts:514-525` 在工具名未声明时拒绝注册。
-- `D:\projects\OpenClaw\docs\plugins\manifest.md:662-663` 明确运行时注册必须匹配 `contracts.tools`。
+- `OpenClaw\src\plugins\registry.ts:486` 开始处理 `registerTool`。
+- `OpenClaw\src\plugins\registry.ts:494` 读取 manifest 声明的工具名。
+- `OpenClaw\src\plugins\registry.ts:495-503` 在没有 `contracts.tools` 时拒绝注册。
+- `OpenClaw\src\plugins\registry.ts:514-525` 在工具名未声明时拒绝注册。
+- `OpenClaw\docs\plugins\manifest.md:662-663` 明确运行时注册必须匹配 `contracts.tools`。
 
 因此，LuaSkills 中 install/uninstall/update 导致工具 ID 变化时，OpenClaw 不能只靠运行时 gRPC 返回新列表来直接新增任意工具。更稳妥的方式是：
 
@@ -71,10 +71,10 @@ OpenClaw 的工具 descriptor 可以携带名称、描述、参数 schema。相�
 
 OpenClaw 存在原生 memory capability：
 
-- `D:\projects\OpenClaw\src\plugins\memory-state.ts:128-133` 定义 `MemoryPluginCapability`。
-- `D:\projects\OpenClaw\src\plugins\memory-state.ts:164-169` 注册 active memory capability。
-- `D:\projects\OpenClaw\src\plugins\memory-runtime.ts:56-65` 从 runtime 解析 active memory manager。
-- `D:\projects\OpenClaw\extensions\memory-core\index.ts:170-181` 是官方 memory-core 的注册示例。
+- `OpenClaw\src\plugins\memory-state.ts:128-133` 定义 `MemoryPluginCapability`。
+- `OpenClaw\src\plugins\memory-state.ts:164-169` 注册 active memory capability。
+- `OpenClaw\src\plugins\memory-runtime.ts:56-65` 从 runtime 解析 active memory manager。
+- `OpenClaw\extensions\memory-core\index.ts:170-181` 是官方 memory-core 的注册示例。
 
 Vulcan 记忆接入应新增一个 `kind: "memory"` 插件，例如 `vulcan-memory`。它通过 `api.registerMemoryCapability(...)` 提供 OpenClaw 期望的 memory runtime，但底层不直接连接 VMM，而是统一调用 vulcan-host gRPC。
 
@@ -121,11 +121,11 @@ OpenClaw 提供多种 hook，可以覆盖我们之前讨论的 precheck、postac
 
 关键依据：
 
-- `D:\projects\OpenClaw\src\plugins\hook-types.ts:155-160` 定义 prompt 注入类 hook。
-- `D:\projects\OpenClaw\src\plugins\hook-before-agent-start.types.ts:22-42` 定义 `before_prompt_build` 可返回的 prompt 修改字段。
-- `D:\projects\OpenClaw\src\plugins\host-hook-turn-types.ts:29-38` 定义 `agent_turn_prepare` 的上下文注入结果。
-- `D:\projects\OpenClaw\src\plugins\hook-types.ts:403-434` 定义 `before_tool_call`。
-- `D:\projects\OpenClaw\src\plugins\hook-types.ts:436-444` 定义 `after_tool_call`。
+- `OpenClaw\src\plugins\hook-types.ts:155-160` 定义 prompt 注入类 hook。
+- `OpenClaw\src\plugins\hook-before-agent-start.types.ts:22-42` 定义 `before_prompt_build` 可返回的 prompt 修改字段。
+- `OpenClaw\src\plugins\host-hook-turn-types.ts:29-38` 定义 `agent_turn_prepare` 的上下文注入结果。
+- `OpenClaw\src\plugins\hook-types.ts:403-434` 定义 `before_tool_call`。
+- `OpenClaw\src\plugins\hook-types.ts:436-444` 定义 `after_tool_call`。
 
 因此，OpenClaw 相比 Claude Code 这类偏 MCP 的宿主，更适合做完整模式接入。
 
@@ -164,10 +164,10 @@ OpenClaw hook/tool context 可拿到：
 
 ## 五、推荐目录结构
 
-建议 `D:\projects\vulcan-plugins-openclaw` 采用如下结构：
+建议 `this plugin repository` 采用如下结构：
 
 ```text
-D:\projects\vulcan-plugins-openclaw
+this plugin repository
 ├── docs
 │   ├── analysis
 │   ├── completed

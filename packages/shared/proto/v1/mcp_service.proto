@@ -1,0 +1,846 @@
+syntax = "proto3";
+
+package vulcan.mcp.v1;
+
+option go_package = "github.com/openvulcan/vulcan-agent-service/proto/v1;mcpv1";
+
+import "google/protobuf/empty.proto";
+
+// McpService exposes the MCP server surface over gRPC.
+// Supports unary calls for direct requests and long-lived streaming connections with heartbeat.
+// McpService 通过 gRPC 暴露 MCP 服务表面，支持一元调用和带心跳的长连接。
+service McpService {
+  // Healthz reports whether the MCP server is alive.
+  rpc Healthz(google.protobuf.Empty) returns (HealthzResponse);
+
+  // Call invokes one MCP method (tool, resource, prompt, etc.) and returns the result.
+  // Call 用于调用一个 MCP 方法（工具、资源、提示词等）并返回结果。
+  rpc Call(McpCallRequest) returns (McpCallResponse);
+
+  // Connect establishes a long-lived streaming connection.
+  // The server pushes heartbeat events and call responses.
+  // Connect 用于建立长连接，服务端推送心跳事件和调用响应。
+  rpc Connect(ConnectRequest) returns (stream ConnectEvent);
+}
+
+// LuaSkillsService exposes stable LuaSkills management methods plus one dynamic tool-call entry.
+// LuaSkillsService 暴露稳定的 LuaSkills 管理方法，以及一个动态工具调用入口。
+service LuaSkillsService {
+  // ListSkills returns loaded LuaSkill packages grouped by skill id and root.
+  // ListSkills 返回按技能标识和根目录分组的已加载 LuaSkill 包。
+  rpc ListSkills(LuaSkillListSkillsRequest) returns (LuaSkillListSkillsResponse);
+
+  // ListTools returns only LuaSkills dynamic runtime entries exposed as callable tools.
+  // ListTools 仅返回 LuaSkills 动态运行时入口暴露出的可调用工具。
+  rpc ListTools(LuaSkillListToolsRequest) returns (LuaSkillListToolsResponse);
+
+  // GetTool returns one LuaSkills dynamic tool descriptor by canonical tool name.
+  // GetTool 按标准工具名返回一个 LuaSkills 动态工具描述。
+  rpc GetTool(LuaSkillGetToolRequest) returns (LuaSkillGetToolResponse);
+
+  // CallTool invokes one LuaSkills dynamic tool. Host-owned stable tools have dedicated RPCs instead.
+  // CallTool 调用一个 LuaSkills 动态工具；宿主稳定工具应使用专门 RPC。
+  rpc CallTool(LuaSkillCallToolRequest) returns (LuaSkillCallToolResponse);
+
+  // ListHelp returns the registered LuaSkills help tree rendered as Markdown.
+  // ListHelp 返回已注册 LuaSkills 帮助树的 Markdown 渲染文本。
+  rpc ListHelp(LuaSkillListHelpRequest) returns (LuaSkillTextResponse);
+
+  // GetHelp returns one LuaSkills help flow rendered as Markdown.
+  // GetHelp 返回一个 LuaSkills 帮助流程的 Markdown 渲染文本。
+  rpc GetHelp(LuaSkillGetHelpRequest) returns (LuaSkillTextResponse);
+
+  // RuntimeConfig dispatches the canonical LuaSkills package-configuration JSON contract.
+  // RuntimeConfig 分发标准 LuaSkills 技能包配置 JSON 契约。
+  rpc RuntimeConfig(LuaSkillRuntimeConfigRequest) returns (LuaSkillRuntimeConfigResponse);
+
+  // ListInstalledSkills renders the USER-layer managed LuaSkills inventory.
+  // ListInstalledSkills 渲染 USER 层受管 LuaSkills 清单。
+  rpc ListInstalledSkills(LuaSkillListInstalledSkillsRequest) returns (LuaSkillTextResponse);
+
+  // InstallSkill installs one USER-layer managed LuaSkill from an approved source.
+  // InstallSkill 从已批准来源安装一个 USER 层受管 LuaSkill。
+  rpc InstallSkill(LuaSkillInstallRequest) returns (LuaSkillTextResponse);
+
+  // UpdateSkill updates one USER-layer managed LuaSkill by skill id.
+  // UpdateSkill 按技能标识更新一个 USER 层受管 LuaSkill。
+  rpc UpdateSkill(LuaSkillUpdateRequest) returns (LuaSkillTextResponse);
+
+  // UninstallSkill uninstalls one USER-layer LuaSkill while retaining databases.
+  // UninstallSkill 卸载一个 USER 层 LuaSkill，并保留数据库。
+  rpc UninstallSkill(LuaSkillUninstallRequest) returns (LuaSkillTextResponse);
+
+  // ReloadRuntimeConfigs reloads hot-reloadable runtime configs used by LuaSkills calls.
+  // ReloadRuntimeConfigs 重载 LuaSkills 调用使用的可热重载运行时配置。
+  rpc ReloadRuntimeConfigs(LuaSkillReloadRuntimeConfigsRequest) returns (LuaSkillTextResponse);
+}
+
+// HostAdapterService exposes host adapter relay planning helpers over gRPC.
+// HostAdapterService 通过 gRPC 暴露宿主适配器中转规划辅助能力。
+service HostAdapterService {
+  // GetHostAdapterProfile returns one normalized host adapter descriptor and capability profile.
+  // GetHostAdapterProfile 返回一个归一化宿主适配器描述与能力画像。
+  rpc GetHostAdapterProfile(HostAdapterProfileRequest) returns (HostAdapterProfileResponse);
+
+  // BuildHostAdapterRuntime normalizes session/workmem context for one host adapter call.
+  // BuildHostAdapterRuntime 为单次宿主适配器调用归一化 session/workmem 上下文。
+  rpc BuildHostAdapterRuntime(HostAdapterRuntimeRequest) returns (HostAdapterRuntimeResponse);
+
+  // DiffToolRegistry compares two host-visible tool registry snapshots.
+  // DiffToolRegistry 对比两份宿主可见 tool 注册表快照。
+  rpc DiffToolRegistry(HostAdapterDiffToolRegistryRequest) returns (HostAdapterDiffToolRegistryResponse);
+
+  // BuildToolRefreshNotice turns tool registry changes into model/user-facing refresh guidance.
+  // BuildToolRefreshNotice 将 tool 注册表变化转换为面向模型和用户的刷新提示。
+  rpc BuildToolRefreshNotice(HostAdapterToolRefreshNoticeRequest) returns (HostAdapterToolRefreshNoticeResponse);
+
+  // GetVmmStatus reports whether the VMM backend is enabled for this host runtime.
+  // GetVmmStatus 返回当前宿主运行时是否启用了 VMM 后端。
+  rpc GetVmmStatus(HostAdapterVmmStatusRequest) returns (HostAdapterVmmStatusResponse);
+
+  // ListVmmMemoryTools returns host-facing descriptors for the stable VMM memory tools.
+  // ListVmmMemoryTools 返回稳定 VMM 记忆工具的宿主可见描述。
+  rpc ListVmmMemoryTools(HostAdapterListVmmMemoryToolsRequest) returns (HostAdapterListVmmMemoryToolsResponse);
+
+  // ListVmmBindingTools returns host-facing descriptors for stable VMM binding and admin helper tools.
+  // ListVmmBindingTools 返回稳定 VMM 绑定与管理辅助工具的宿主可见描述。
+  rpc ListVmmBindingTools(HostAdapterListVmmBindingToolsRequest) returns (HostAdapterListVmmBindingToolsResponse);
+
+  // ListVmmProfileTools returns host-facing descriptors for optional VMM profile-adjust tools.
+  // ListVmmProfileTools 返回可选 VMM 画像调整工具的宿主可见描述。
+  rpc ListVmmProfileTools(HostAdapterListVmmProfileToolsRequest) returns (HostAdapterListVmmProfileToolsResponse);
+}
+
+// ============================================================
+// Health check
+// ============================================================
+
+message HealthzResponse {
+  string status = 1;
+  string version = 2;
+  string protocol_version = 3;
+  int64 uptime_sec = 4; // service uptime in seconds
+                        // 服务运行时长，单位为秒。
+}
+
+// ============================================================
+// Unary call
+// ============================================================
+
+message McpCallRequest {
+  string method = 1;       // e.g. "tools/call", "tools/list", "resources/list"
+  string arguments = 2;    // JSON string of tool/method arguments
+  uint64 project_id = 3;
+  uint64 user_id = 4;
+  string session_id = 5;
+  // Trusted gRPC client name used for exact budget resolution.
+  // 用于精确预算解析的受信任 gRPC 客户端名称。
+  string client_name = 6;
+  // Optional gRPC client version used for diagnostics.
+  // 用于诊断的可选 gRPC 客户端版本。
+  string client_version = 7;
+  // Optional request correlation id; it is not a session identifier.
+  // 可选请求关联标识；它不是会话标识。
+  string request_id = 8;
+}
+
+message McpCallResponse {
+  string result = 1;       // JSON string of the result
+  bool is_error = 2;
+  string message = 3;
+}
+
+// ============================================================
+// Long-lived streaming connection
+// ============================================================
+
+message ConnectRequest {
+  uint64 project_id = 1;
+  uint64 user_id = 2;
+  string client_name = 3;           // e.g. "vscode-plugin", "custom-cli"
+  int32 heartbeat_interval_ms = 4;  // heartbeat interval in ms (default 30000)
+  int64 connection_timeout_sec = 5; // max connection lifetime in sec (default 86400)
+}
+
+// ConnectEvent is the union of all possible server→client stream events.
+message ConnectEvent {
+  oneof event {
+    WelcomeEvent welcome = 1;
+    HeartbeatEvent heartbeat = 2;
+    CallResponseEvent call_response = 3;
+    NotificationEvent notification = 4;
+  }
+}
+
+message WelcomeEvent {
+  string server_version = 1;
+  string session_id = 2;
+  string protocol_version = 3;
+}
+
+message HeartbeatEvent {
+  int64 timestamp_ms = 1;  // unix epoch milliseconds
+  int64 uptime_sec = 2;     // server uptime in seconds
+}
+
+message CallResponseEvent {
+  string request_id = 1;    // client-provided correlation id
+  string method = 2;
+  string result = 3;        // JSON string
+  bool is_error = 4;
+  string message = 5;
+}
+
+message NotificationEvent {
+  string type = 1;    // e.g. "tools_changed", "resources_changed"
+  string payload = 2; // JSON string
+}
+
+// ============================================================
+// LuaSkills service
+// ============================================================
+
+// LuaSkillClientContext carries the trusted gRPC client identity used for exact budget resolution.
+// LuaSkillClientContext 承载受信任的 gRPC 客户端身份，用于精确预算解析。
+message LuaSkillClientContext {
+  // Trusted gRPC client name used for exact budget resolution.
+  // 用于精确预算解析的受信任 gRPC 客户端名称。
+  string client_name = 1;
+  // Optional gRPC client version used for diagnostics and runtime context.
+  // 用于诊断和运行时上下文的可选 gRPC 客户端版本。
+  string client_version = 2;
+  // Optional request correlation id; it does not express conversation state.
+  // 可选请求关联标识；它不表达对话状态。
+  string request_id = 3;
+}
+
+// LuaSkillProjectionContext declares whether the caller can hide and host-manage LUASKILL_SID.
+// LuaSkillProjectionContext 声明调用方是否可以隐藏并由宿主托管 LUASKILL_SID。
+message LuaSkillProjectionContext {
+  // Whether this host can safely hide LUASKILL_SID from model-facing schemas.
+  // 当前宿主是否可以安全地从面向模型的 schema 中隐藏 LUASKILL_SID。
+  bool supports_managed_luaskill_sid = 1;
+  // Stable session identity automatically injected into LUASKILL_SID during tool calls.
+  // 工具调用阶段自动注入到 LUASKILL_SID 的稳定会话身份。
+  string session_id = 2;
+}
+
+// LuaSkillDescriptor describes one loaded LuaSkill package and its exposed tool names.
+// LuaSkillDescriptor 描述一个已加载 LuaSkill 包及其暴露的工具名。
+message LuaSkillDescriptor {
+  // Skill identifier declared by the LuaSkill package.
+  // LuaSkill 包声明的技能标识。
+  string skill_id = 1;
+  // Runtime root name that contributed this package.
+  // 提供该技能包的运行时根名称。
+  string root_name = 2;
+  // Concrete skill directory path.
+  // 具体技能目录路径。
+  string skill_dir = 3;
+  // Canonical dynamic tool names exposed by this package.
+  // 该技能包暴露的标准动态工具名。
+  repeated string tool_names = 4;
+}
+
+// LuaSkillToolDescriptor describes one callable LuaSkills dynamic runtime entry.
+// LuaSkillToolDescriptor 描述一个可调用的 LuaSkills 动态运行时入口。
+message LuaSkillToolDescriptor {
+  // Canonical dynamic tool name.
+  // 标准动态工具名称。
+  string name = 1;
+  // Human-readable tool description.
+  // 面向人的工具描述。
+  string description = 2;
+  // JSON-encoded MCP input schema.
+  // JSON 编码的 MCP 输入 schema。
+  string input_schema_json = 3;
+  // JSON-encoded MCP tool annotations.
+  // JSON 编码的 MCP 工具注解。
+  string annotations_json = 4;
+  // Skill identifier that owns this tool.
+  // 拥有该工具的技能标识。
+  string skill_id = 5;
+  // Local entry name inside the owning LuaSkill package.
+  // 所属 LuaSkill 包内的本地入口名称。
+  string entry_name = 6;
+  // Runtime root name that contributed this tool.
+  // 提供该工具的运行时根名称。
+  string root_name = 7;
+  // Concrete skill directory path.
+  // 具体技能目录路径。
+  string skill_dir = 8;
+}
+
+// LuaSkillTextResponse carries a rendered text result for stable LuaSkills RPCs.
+// LuaSkillTextResponse 承载稳定 LuaSkills RPC 的文本渲染结果。
+message LuaSkillTextResponse {
+  // Rendered response text.
+  // 渲染后的响应文本。
+  string text = 1;
+  // Whether the stable method completed with a tool-level error.
+  // 稳定方法是否产生工具级错误。
+  bool is_error = 2;
+  // Error summary when is_error is true.
+  // is_error 为 true 时的错误摘要。
+  string message = 3;
+}
+
+// LuaSkillListSkillsRequest asks for loaded LuaSkills package descriptors.
+// LuaSkillListSkillsRequest 请求已加载 LuaSkills 包描述。
+message LuaSkillListSkillsRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+}
+
+// LuaSkillListSkillsResponse returns loaded LuaSkills package descriptors.
+// LuaSkillListSkillsResponse 返回已加载 LuaSkills 包描述。
+message LuaSkillListSkillsResponse {
+  // Loaded LuaSkill package descriptors.
+  // 已加载的 LuaSkill 包描述列表。
+  repeated LuaSkillDescriptor skills = 1;
+}
+
+// LuaSkillListToolsRequest asks for dynamic LuaSkills tool descriptors.
+// LuaSkillListToolsRequest 请求动态 LuaSkills 工具描述。
+message LuaSkillListToolsRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+  // Optional projection policy used to hide host-managed LUASKILL_SID from AI-visible schemas.
+  // 可选投影策略，用于从 AI 可见 schema 中隐藏宿主管理的 LUASKILL_SID。
+  LuaSkillProjectionContext projection = 2;
+}
+
+// LuaSkillListToolsResponse returns dynamic LuaSkills tool descriptors.
+// LuaSkillListToolsResponse 返回动态 LuaSkills 工具描述。
+message LuaSkillListToolsResponse {
+  // Dynamic LuaSkills tool descriptors.
+  // 动态 LuaSkills 工具描述列表。
+  repeated LuaSkillToolDescriptor tools = 1;
+}
+
+// LuaSkillGetToolRequest selects one dynamic LuaSkills tool by canonical name.
+// LuaSkillGetToolRequest 按标准名称选择一个动态 LuaSkills 工具。
+message LuaSkillGetToolRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+  // Canonical dynamic tool name to read.
+  // 要读取的标准动态工具名称。
+  string tool_name = 2;
+  // Optional projection policy used to hide host-managed LUASKILL_SID from AI-visible schemas.
+  // 可选投影策略，用于从 AI 可见 schema 中隐藏宿主管理的 LUASKILL_SID。
+  LuaSkillProjectionContext projection = 3;
+}
+
+// LuaSkillGetToolResponse returns one dynamic LuaSkills tool descriptor.
+// LuaSkillGetToolResponse 返回一个动态 LuaSkills 工具描述。
+message LuaSkillGetToolResponse {
+  // Dynamic LuaSkills tool descriptor.
+  // 动态 LuaSkills 工具描述。
+  LuaSkillToolDescriptor tool = 1;
+}
+
+// LuaSkillCallToolRequest invokes one dynamic LuaSkills tool with JSON arguments.
+// LuaSkillCallToolRequest 使用 JSON 参数调用一个动态 LuaSkills 工具。
+message LuaSkillCallToolRequest {
+  // Trusted client context for budget resolution.
+  // 用于预算解析的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+  // Canonical dynamic tool name to call.
+  // 要调用的标准动态工具名称。
+  string tool_name = 2;
+  // JSON-encoded tool arguments.
+  // JSON 编码的工具参数。
+  string arguments_json = 3;
+  // Optional projection policy used to inject host-managed LUASKILL_SID.
+  // 可选投影策略，用于自动注入宿主管理的 LUASKILL_SID。
+  LuaSkillProjectionContext projection = 4;
+}
+
+// LuaSkillCallToolResponse returns the rendered MCP-compatible tool result.
+// LuaSkillCallToolResponse 返回渲染后的 MCP 兼容工具结果。
+message LuaSkillCallToolResponse {
+  // JSON-encoded MCP-compatible ToolCallResult.
+  // JSON 编码的 MCP 兼容 ToolCallResult。
+  string result_json = 1;
+  // Convenience joined text extracted from result_json content blocks.
+  // 从 result_json 内容块提取并拼接出的便捷文本。
+  string text = 2;
+  // Whether the dynamic tool returned a tool-level error.
+  // 动态工具是否返回工具级错误。
+  bool is_error = 3;
+  // Error summary when is_error is true.
+  // is_error 为 true 时的错误摘要。
+  string message = 4;
+}
+
+// LuaSkillListHelpRequest asks for the full LuaSkills help tree.
+// LuaSkillListHelpRequest 请求完整 LuaSkills 帮助树。
+message LuaSkillListHelpRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+}
+
+// LuaSkillGetHelpRequest selects one LuaSkills help flow.
+// LuaSkillGetHelpRequest 选择一个 LuaSkills 帮助流程。
+message LuaSkillGetHelpRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+  // Target skill id.
+  // 目标技能标识。
+  string skill_id = 2;
+  // Help flow name.
+  // 帮助流程名称。
+  string flow = 3;
+}
+
+// LuaSkillRuntimeConfigRequest carries one strict upstream runtime-config request.
+// LuaSkillRuntimeConfigRequest 承载一份严格的上游 runtime-config 请求。
+message LuaSkillRuntimeConfigRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+  // Complete JSON-encoded RuntimeSkillConfigToolRequest object.
+  // 完整 JSON 编码的 RuntimeSkillConfigToolRequest 对象。
+  string request_json = 2;
+}
+
+// LuaSkillRuntimeConfigResponse carries the stable upstream response envelope.
+// LuaSkillRuntimeConfigResponse 承载稳定的上游响应包络。
+message LuaSkillRuntimeConfigResponse {
+  // Complete JSON-encoded RuntimeSkillConfigToolResponse object.
+  // 完整 JSON 编码的 RuntimeSkillConfigToolResponse 对象。
+  string response_json = 1;
+}
+
+// LuaSkillListInstalledSkillsRequest asks for the USER-layer managed inventory.
+// LuaSkillListInstalledSkillsRequest 请求 USER 层受管清单。
+message LuaSkillListInstalledSkillsRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+}
+
+// LuaSkillInstallRequest installs one USER-layer managed skill.
+// LuaSkillInstallRequest 安装一个 USER 层受管技能。
+message LuaSkillInstallRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+  // Install source locator.
+  // 安装来源定位值。
+  string source = 2;
+  // Optional source type override.
+  // 可选来源类型覆盖。
+  string source_type = 3;
+}
+
+// LuaSkillUpdateRequest updates one USER-layer managed skill.
+// LuaSkillUpdateRequest 更新一个 USER 层受管技能。
+message LuaSkillUpdateRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+  // Target skill id.
+  // 目标技能标识。
+  string skill_id = 2;
+}
+
+// LuaSkillUninstallRequest uninstalls one USER-layer skill.
+// LuaSkillUninstallRequest 卸载一个 USER 层技能。
+message LuaSkillUninstallRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+  // Target skill id.
+  // 目标技能标识。
+  string skill_id = 2;
+}
+
+// LuaSkillReloadRuntimeConfigsRequest reloads hot-reloadable runtime config files.
+// LuaSkillReloadRuntimeConfigsRequest 重载可热重载运行时配置文件。
+message LuaSkillReloadRuntimeConfigsRequest {
+  // Trusted client context for this request.
+  // 本次请求的受信任客户端上下文。
+  LuaSkillClientContext context = 1;
+}
+
+// ============================================================
+// Host adapter relay service
+// ============================================================
+
+// HostAdapterClientContext carries trusted client identity for adapter relay diagnostics.
+// HostAdapterClientContext 承载适配器中转诊断使用的受信任客户端身份。
+message HostAdapterClientContext {
+  // Trusted gRPC client name.
+  // 受信任 gRPC 客户端名称。
+  string client_name = 1;
+  // Optional client version used for diagnostics.
+  // 用于诊断的可选客户端版本。
+  string client_version = 2;
+  // Optional request correlation id.
+  // 可选请求关联标识。
+  string request_id = 3;
+}
+
+// HostAdapterProfileRequest selects one host profile by host kind or alias.
+// HostAdapterProfileRequest 按宿主类型或别名选择一个宿主画像。
+message HostAdapterProfileRequest {
+  // Trusted client context for diagnostics.
+  // 用于诊断的受信任客户端上下文。
+  HostAdapterClientContext context = 1;
+  // Host kind or alias, such as opencode, generic-mcp, or claude.
+  // 宿主类型或别名，例如 opencode、generic-mcp 或 claude。
+  string host_kind = 2;
+}
+
+// HostAdapterProfileResponse returns the adapter descriptor and capability profile.
+// HostAdapterProfileResponse 返回适配器描述与能力画像。
+message HostAdapterProfileResponse {
+  // JSON-encoded HostAdapterDescriptor.
+  // JSON 编码的 HostAdapterDescriptor。
+  string adapter_json = 1;
+  // JSON-encoded HostCapabilityProfile.
+  // JSON 编码的 HostCapabilityProfile。
+  string profile_json = 2;
+  // Normalized host kind.
+  // 归一化宿主类型。
+  string host_kind = 3;
+  // Host display name.
+  // 宿主展示名称。
+  string display_name = 4;
+  // Selected refresh mode.
+  // 选中的刷新模式。
+  string refresh_mode = 5;
+  // Selected identity mode.
+  // 选中的身份模式。
+  string identity_mode = 6;
+  // Whether the request failed at service level.
+  // 请求是否在服务层失败。
+  bool is_error = 7;
+  // Error summary or diagnostics.
+  // 错误摘要或诊断信息。
+  string message = 8;
+  // Whether the VMM backend is enabled in the current host runtime.
+  // 当前宿主运行时是否启用了 VMM 后端。
+  bool vmm_enabled = 9;
+  // Human-readable VMM backend status.
+  // 人类可读的 VMM 后端状态。
+  string vmm_status = 10;
+}
+
+// HostAdapterRuntimeRequest asks the host to normalize runtime context for one adapter call.
+// HostAdapterRuntimeRequest 请求宿主为单次适配器调用归一化运行时上下文。
+message HostAdapterRuntimeRequest {
+  // Trusted client context for diagnostics.
+  // 用于诊断的受信任客户端上下文。
+  HostAdapterClientContext context = 1;
+  // Host kind or alias.
+  // 宿主类型或别名。
+  string host_kind = 2;
+  // Optional host kind override.
+  // 可选宿主类型覆盖。
+  string adapter_host_kind = 3;
+  // Native host session id when available.
+  // 可用时的原生宿主 session id。
+  string session_id = 4;
+  // Explicit WorkMem id for degraded callers.
+  // 降级调用方使用的显式 WorkMem id。
+  string workmem_id = 5;
+  // Host turn id or message id.
+  // 宿主 turn id 或 message id。
+  string turn_id = 6;
+  // Workspace path or project key.
+  // 工作区路径或项目键。
+  string workspace = 7;
+  // Current user message for diagnostics or prompt planning.
+  // 用于诊断或提示词规划的当前用户消息。
+  string user_message = 8;
+  // Conversation id for hosts that do not call it session id.
+  // 不把会话标识称为 session id 的宿主使用的 conversation id。
+  string conversation_id = 9;
+  // Root session id for forked or nested sessions.
+  // fork 或嵌套会话使用的 root session id。
+  string root_session_id = 10;
+}
+
+// HostAdapterRuntimeResponse returns normalized runtime context and readiness flags.
+// HostAdapterRuntimeResponse 返回归一化运行时上下文和就绪标记。
+message HostAdapterRuntimeResponse {
+  // JSON-encoded HostAdapterRuntime.
+  // JSON 编码的 HostAdapterRuntime。
+  string runtime_json = 1;
+  // Normalized host kind.
+  // 归一化宿主类型。
+  string host_kind = 2;
+  // Normalized session id when available.
+  // 可用时的归一化 session id。
+  string session_id = 3;
+  // Effective WorkMem id when available.
+  // 可用时的有效 WorkMem id。
+  string workmem_id = 4;
+  // WorkMem id source.
+  // WorkMem id 来源。
+  string workmem_source = 5;
+  // Whether the adapter identity strategy is ready.
+  // 适配器身份策略是否就绪。
+  bool identity_ready = 6;
+  // Degradation reasons detected by the host.
+  // 宿主检测到的降级原因。
+  repeated string degraded_reasons = 7;
+  // Whether the request failed at service level.
+  // 请求是否在服务层失败。
+  bool is_error = 8;
+  // Error summary or diagnostics.
+  // 错误摘要或诊断信息。
+  string message = 9;
+  // Whether the VMM backend is enabled in the current host runtime.
+  // 当前宿主运行时是否启用了 VMM 后端。
+  bool vmm_enabled = 10;
+  // Human-readable VMM backend status.
+  // 人类可读的 VMM 后端状态。
+  string vmm_status = 11;
+}
+
+// HostAdapterDiffToolRegistryRequest asks the host to diff two tool registry snapshots.
+// HostAdapterDiffToolRegistryRequest 请求宿主对比两份 tool 注册表快照。
+message HostAdapterDiffToolRegistryRequest {
+  // Trusted client context for diagnostics.
+  // 用于诊断的受信任客户端上下文。
+  HostAdapterClientContext context = 1;
+  // JSON-encoded previous ToolRegistrySnapshot.
+  // JSON 编码的旧 ToolRegistrySnapshot。
+  string previous_snapshot_json = 2;
+  // JSON-encoded next ToolRegistrySnapshot.
+  // JSON 编码的新 ToolRegistrySnapshot。
+  string next_snapshot_json = 3;
+  // Optional explicit refresh mode.
+  // 可选显式刷新模式。
+  string refresh_mode = 4;
+  // Optional dynamic refresh support flag.
+  // 可选动态刷新支持标记。
+  bool dynamic_tool_refresh_supported = 5;
+  // Whether dynamic_tool_refresh_supported was explicitly provided.
+  // dynamic_tool_refresh_supported 是否由调用方显式提供。
+  bool has_dynamic_tool_refresh_supported = 6;
+  // Whether the host lifecycle operation explicitly requires restart.
+  // 宿主生命周期操作是否显式要求重启。
+  bool host_restart_required = 7;
+}
+
+// HostAdapterDiffToolRegistryResponse returns diff buckets and restart guidance.
+// HostAdapterDiffToolRegistryResponse 返回差异分组和重启提示。
+message HostAdapterDiffToolRegistryResponse {
+  // JSON-encoded ToolRegistryDiff.
+  // JSON 编码的 ToolRegistryDiff。
+  string diff_json = 1;
+  // All changed tool ids.
+  // 所有变化的 tool id。
+  repeated string changed_tool_ids = 2;
+  // Added tool ids.
+  // 新增 tool id。
+  repeated string added_tool_ids = 3;
+  // Removed tool ids.
+  // 删除 tool id。
+  repeated string removed_tool_ids = 4;
+  // Updated tool ids.
+  // 更新 tool id。
+  repeated string updated_tool_ids = 5;
+  // Whether restart or reconnect is required.
+  // 是否需要重启或重连。
+  bool restart_required = 6;
+  // Compact diff summary.
+  // 紧凑差异摘要。
+  string summary = 7;
+  // Whether the request failed at service level.
+  // 请求是否在服务层失败。
+  bool is_error = 8;
+  // Error summary or diagnostics.
+  // 错误摘要或诊断信息。
+  string message = 9;
+}
+
+// HostAdapterToolRefreshNoticeRequest asks the host to build refresh guidance from snapshots.
+// HostAdapterToolRefreshNoticeRequest 请求宿主根据快照构建刷新提示。
+message HostAdapterToolRefreshNoticeRequest {
+  // Trusted client context for diagnostics.
+  // 用于诊断的受信任客户端上下文。
+  HostAdapterClientContext context = 1;
+  // Host kind or alias.
+  // 宿主类型或别名。
+  string host_kind = 2;
+  // JSON-encoded previous ToolRegistrySnapshot.
+  // JSON 编码的旧 ToolRegistrySnapshot。
+  string previous_snapshot_json = 3;
+  // JSON-encoded next ToolRegistrySnapshot.
+  // JSON 编码的新 ToolRegistrySnapshot。
+  string next_snapshot_json = 4;
+}
+
+// HostAdapterToolRefreshNoticeResponse returns structured refresh guidance.
+// HostAdapterToolRefreshNoticeResponse 返回结构化刷新提示。
+message HostAdapterToolRefreshNoticeResponse {
+  // JSON-encoded ToolRefreshNotice.
+  // JSON 编码的 ToolRefreshNotice。
+  string notice_json = 1;
+  // Whether any tool changed.
+  // 是否有任何 tool 变化。
+  bool changed = 2;
+  // Selected refresh mode.
+  // 选中的刷新模式。
+  string refresh_mode = 3;
+  // Notice severity.
+  // 提示严重级别。
+  string severity = 4;
+  // Whether restart or reconnect is required.
+  // 是否需要重启或重连。
+  bool restart_required = 5;
+  // Changed tool ids.
+  // 变化的 tool id。
+  repeated string changed_tool_ids = 6;
+  // Model-facing message.
+  // 模型可见消息。
+  string model_message = 7;
+  // User-facing message.
+  // 用户可见消息。
+  string user_message = 8;
+  // Whether the request failed at service level.
+  // 请求是否在服务层失败。
+  bool is_error = 9;
+  // Error summary or diagnostics.
+  // 错误摘要或诊断信息。
+  string message = 10;
+}
+
+// HostAdapterVmmStatusRequest asks for the runtime VMM backend status.
+// HostAdapterVmmStatusRequest 请求运行时 VMM 后端状态。
+message HostAdapterVmmStatusRequest {
+  // Trusted client context used for diagnostics and future policy decisions.
+  // 用于诊断和未来策略判断的受信任客户端上下文。
+  HostAdapterClientContext context = 1;
+}
+
+// HostAdapterVmmStatusResponse returns whether VMM-dependent features may run.
+// HostAdapterVmmStatusResponse 返回依赖 VMM 的能力是否可运行。
+message HostAdapterVmmStatusResponse {
+  // Whether the VMM backend is enabled in the current host runtime.
+  // 当前宿主运行时是否启用了 VMM 后端。
+  bool vmm_enabled = 1;
+  // Human-readable VMM backend status.
+  // 人类可读的 VMM 后端状态。
+  string vmm_status = 2;
+  // Whether the request failed at service level.
+  // 请求是否在服务层失败。
+  bool is_error = 3;
+  // Error summary or diagnostics.
+  // 错误摘要或诊断信息。
+  string message = 4;
+}
+
+// HostAdapterToolDescriptor describes one stable host-visible tool.
+// HostAdapterToolDescriptor 描述一个稳定的宿主可见工具。
+message HostAdapterToolDescriptor {
+  // Canonical tool name exposed by the host plugin.
+  // 宿主插件暴露的标准工具名称。
+  string name = 1;
+  // Model-facing tool description, including important argument guidance.
+  // 面向模型的工具描述，包含重要参数指导。
+  string description = 2;
+  // JSON-encoded input schema for the tool arguments.
+  // JSON 编码的工具入参 schema。
+  string input_schema_json = 3;
+  // JSON-encoded tool annotations and diagnostics.
+  // JSON 编码的工具注解和诊断信息。
+  string annotations_json = 4;
+  // Metadata authority or source identifier.
+  // 元信息权威来源或来源标识。
+  string source = 5;
+}
+
+// HostAdapterListVmmMemoryToolsRequest asks for VMM memory tool metadata.
+// HostAdapterListVmmMemoryToolsRequest 请求 VMM 记忆工具元信息。
+message HostAdapterListVmmMemoryToolsRequest {
+  // Trusted client context for diagnostics.
+  // 用于诊断的受信任客户端上下文。
+  HostAdapterClientContext context = 1;
+}
+
+// HostAdapterListVmmMemoryToolsResponse returns VMM memory tool descriptors.
+// HostAdapterListVmmMemoryToolsResponse 返回 VMM 记忆工具描述。
+message HostAdapterListVmmMemoryToolsResponse {
+  // Stable host-visible VMM memory tool descriptors.
+  // 稳定的宿主可见 VMM 记忆工具描述列表。
+  repeated HostAdapterToolDescriptor tools = 1;
+  // Whether the request failed at service level.
+  // 请求是否在服务层失败。
+  bool is_error = 2;
+  // Error summary or diagnostics.
+  // 错误摘要或诊断信息。
+  string message = 3;
+  // Whether the VMM backend is enabled in the current host runtime.
+  // 当前宿主运行时是否启用了 VMM 后端。
+  bool vmm_enabled = 4;
+  // Human-readable VMM backend status.
+  // 人类可读的 VMM 后端状态。
+  string vmm_status = 5;
+}
+
+// HostAdapterListVmmBindingToolsRequest asks for VMM binding/admin tool metadata.
+// HostAdapterListVmmBindingToolsRequest 请求 VMM 绑定与管理工具元信息。
+message HostAdapterListVmmBindingToolsRequest {
+  // Trusted client context for diagnostics.
+  // 用于诊断的受信任客户端上下文。
+  HostAdapterClientContext context = 1;
+}
+
+// HostAdapterListVmmBindingToolsResponse returns VMM binding/admin tool descriptors.
+// HostAdapterListVmmBindingToolsResponse 返回 VMM 绑定与管理工具描述。
+message HostAdapterListVmmBindingToolsResponse {
+  // Stable host-visible VMM binding/admin tool descriptors.
+  // 稳定的宿主可见 VMM 绑定与管理工具描述列表。
+  repeated HostAdapterToolDescriptor tools = 1;
+  // Whether the request failed at service level.
+  // 请求是否在服务层失败。
+  bool is_error = 2;
+  // Error summary or diagnostics.
+  // 错误摘要或诊断信息。
+  string message = 3;
+  // Whether the VMM backend is enabled in the current host runtime.
+  // 当前宿主运行时是否启用了 VMM 后端。
+  bool vmm_enabled = 4;
+  // Human-readable VMM backend status.
+  // 人类可读的 VMM 后端状态。
+  string vmm_status = 5;
+}
+
+// HostAdapterListVmmProfileToolsRequest asks for VMM profile-adjust tool metadata.
+// HostAdapterListVmmProfileToolsRequest 请求 VMM 画像调整工具元信息。
+message HostAdapterListVmmProfileToolsRequest {
+  // Trusted client context for diagnostics.
+  // 用于诊断的受信任客户端上下文。
+  HostAdapterClientContext context = 1;
+}
+
+// HostAdapterListVmmProfileToolsResponse returns VMM profile-adjust tool descriptors.
+// HostAdapterListVmmProfileToolsResponse 返回 VMM 画像调整工具描述。
+message HostAdapterListVmmProfileToolsResponse {
+  // Stable host-visible VMM profile-adjust tool descriptors.
+  // 稳定的宿主可见 VMM 画像调整工具描述列表。
+  repeated HostAdapterToolDescriptor tools = 1;
+  // Whether the request failed at service level.
+  // 请求是否在服务层失败。
+  bool is_error = 2;
+  // Error summary or diagnostics.
+  // 错误摘要或诊断信息。
+  string message = 3;
+  // Whether the VMM backend is enabled in the current host runtime.
+  // 当前宿主运行时是否启用了 VMM 后端。
+  bool vmm_enabled = 4;
+  // Human-readable VMM backend status.
+  // 人类可读的 VMM 后端状态。
+  string vmm_status = 5;
+}

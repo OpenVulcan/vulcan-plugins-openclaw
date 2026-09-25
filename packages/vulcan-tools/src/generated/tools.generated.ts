@@ -33,7 +33,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-codekit-ast-detail",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-codekit",
     "skillId": "vulcan-codekit"
   },
   {
@@ -67,7 +66,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-codekit-ast-tree",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-codekit",
     "skillId": "vulcan-codekit"
   },
   {
@@ -99,7 +97,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-codekit-markdown-menu",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-codekit",
     "skillId": "vulcan-codekit"
   },
   {
@@ -129,7 +126,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-codekit-node-source",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-codekit",
     "skillId": "vulcan-codekit"
   },
   {
@@ -177,7 +173,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-codekit-patch",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-codekit",
     "skillId": "vulcan-codekit"
   },
   {
@@ -220,7 +215,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-codekit-rg",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-codekit",
     "skillId": "vulcan-codekit"
   },
   {
@@ -294,7 +288,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-curl-get",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-curl",
     "skillId": "vulcan-curl"
   },
   {
@@ -392,7 +385,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-curl-post",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-curl",
     "skillId": "vulcan-curl"
   },
   {
@@ -430,7 +422,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-curl-request",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-curl",
     "skillId": "vulcan-curl"
   },
   {
@@ -482,7 +473,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-file-edit",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-file",
     "skillId": "vulcan-file"
   },
   {
@@ -522,7 +512,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-file-list",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-file",
     "skillId": "vulcan-file"
   },
   {
@@ -556,7 +545,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-file-read",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-file",
     "skillId": "vulcan-file"
   },
   {
@@ -596,7 +584,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-lua-run",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-lua",
     "skillId": "vulcan-lua"
   },
   {
@@ -660,7 +647,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-testkit-run",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-testkit",
     "skillId": "vulcan-testkit"
   },
   {
@@ -691,7 +677,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-workmem-delete",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-workmem",
     "skillId": "vulcan-workmem"
   },
   {
@@ -721,7 +706,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-workmem-get",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-workmem",
     "skillId": "vulcan-workmem"
   },
   {
@@ -747,7 +731,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-workmem-get-all",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-workmem",
     "skillId": "vulcan-workmem"
   },
   {
@@ -781,7 +764,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-workmem-list",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-workmem",
     "skillId": "vulcan-workmem"
   },
   {
@@ -816,7 +798,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-workmem-set",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-workmem",
     "skillId": "vulcan-workmem"
   },
   {
@@ -842,7 +823,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-workmem-task-close",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-workmem",
     "skillId": "vulcan-workmem"
   },
   {
@@ -873,7 +853,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-workmem-task-create",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-workmem",
     "skillId": "vulcan-workmem"
   },
   {
@@ -891,7 +870,6 @@ export const GENERATED_LUASKILL_TOOLS: VulcanToolDescriptor[] = [
     },
     "name": "vulcan-workmem-task-list",
     "rootName": "ROOT",
-    "skillDir": "\\\\?\\D:\\projects\\vulcan-mcp-client\\output\\skills\\vulcan-workmem",
     "skillId": "vulcan-workmem"
   }
 ];

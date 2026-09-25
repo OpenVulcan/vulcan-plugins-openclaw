@@ -3,6 +3,7 @@
 
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import type {
@@ -64,19 +65,9 @@ interface LoadedGrpcServices {
   vmm: GrpcUnaryClient;
 }
 
-// DEFAULT_PROTO_CANDIDATES covers the local development layout used by this workspace.
-// DEFAULT_PROTO_CANDIDATES 覆盖当前工作区使用的本地开发布局。
-const DEFAULT_PROTO_CANDIDATES = [
-  "D:/projects/vulcan-mcp-client/proto/v1/mcp_service.proto",
-  path.resolve(process.cwd(), "../vulcan-mcp-client/proto/v1/mcp_service.proto"),
-];
-
-// DEFAULT_VMM_PROTO_CANDIDATES covers the sibling VMM proto required for native memory flows.
-// DEFAULT_VMM_PROTO_CANDIDATES 覆盖原生记忆流程需要的同级 VMM proto。
-const DEFAULT_VMM_PROTO_CANDIDATES = [
-  "D:/projects/vulcan-mcp-client/proto/v1/vmm.proto",
-  path.resolve(process.cwd(), "../vulcan-mcp-client/proto/v1/vmm.proto"),
-];
+// BUNDLED_MCP_PROTO_PATH locates the protocol contract shipped beside the shared package at runtime.
+// BUNDLED_MCP_PROTO_PATH 定位随 shared 包一同发布的运行时协议契约。
+const BUNDLED_MCP_PROTO_PATH = fileURLToPath(new URL("../proto/v1/mcp_service.proto", import.meta.url));
 
 // DynamicGrpcVulcanHostClient calls the Rust vulcan-host gRPC surface through proto-loader.
 // DynamicGrpcVulcanHostClient 通过 proto-loader 调用 Rust vulcan-host gRPC 能力面。
@@ -620,7 +611,7 @@ export class DynamicGrpcVulcanHostClient implements VulcanHostClient {
       return this.services;
     }
     const mcpProtoPath = resolveProtoPath(this.config);
-    const vmmProtoPath = resolveVmmProtoPath(this.config, mcpProtoPath);
+    const vmmProtoPath = resolveVmmProtoPath(mcpProtoPath);
     const includeDirs = [...new Set([path.dirname(mcpProtoPath), path.dirname(vmmProtoPath)])];
     const packageDefinition = protoLoader.loadSync([mcpProtoPath, vmmProtoPath], {
       defaults: true,
@@ -669,37 +660,55 @@ export function createVulcanHostClient(config: ResolvedVulcanConfig): VulcanHost
   return new DynamicGrpcVulcanHostClient(config);
 }
 
-// resolveProtoPath resolves the proto path from config, environment, or local workspace defaults.
-// resolveProtoPath 从配置、环境变量或本地工作区默认值解析 proto 路径。
+/**
+ * Resolve mcp_service.proto from an explicit override or the bundled package contract.
+ * 从明确覆盖路径或包内置契约解析 mcp_service.proto。
+ *
+ * @param {ResolvedVulcanConfig} config Runtime plugin config containing protoPath.
+ * 包含 protoPath 的运行时插件配置。
+ * @returns {string} Existing path to mcp_service.proto.
+ * 已存在的 mcp_service.proto 路径。
+ * @throws {Error} When neither the configured nor bundled protocol file exists.
+ * 配置路径与包内置协议文件都不存在时抛出错误。
+ */
 function resolveProtoPath(config: ResolvedVulcanConfig): string {
-  const candidates = [config.protoPath, ...DEFAULT_PROTO_CANDIDATES].filter(Boolean) as string[];
-  const found = candidates.find((candidate) => existsSync(candidate));
-  if (!found) {
-    throw new Error(
-      "Vulcan proto path not found. Set VULCAN_HOST_PROTO_PATH or plugin config protoPath to vulcan-mcp-client/proto/v1/mcp_service.proto.",
-    );
+  // protoPath prefers an existing user override and otherwise uses the contract packaged with this version.
+  // protoPath 优先使用现存用户覆盖路径，否则使用随当前版本打包的契约。
+  const configuredPath = config.protoPath?.trim();
+  if (configuredPath && existsSync(configuredPath)) {
+    return configuredPath;
   }
-  return found;
+  if (configuredPath) {
+    console.warn(`Configured Vulcan proto file was not found; using the bundled contract: ${BUNDLED_MCP_PROTO_PATH}`);
+  }
+  // protoPath becomes the versioned in-package contract when no valid override is available.
+  // protoPath 在没有可用覆盖路径时使用包内版本管理的契约。
+  const protoPath = BUNDLED_MCP_PROTO_PATH;
+  if (!existsSync(protoPath)) {
+    throw new Error(`Vulcan proto file was not found at the resolved path: ${protoPath}`);
+  }
+  return protoPath;
 }
 
-// resolveVmmProtoPath resolves the sibling vmm.proto path used by the raw VMM service client.
-// resolveVmmProtoPath 解析原始 VMM 服务客户端使用的同级 vmm.proto 路径。
-function resolveVmmProtoPath(config: ResolvedVulcanConfig, mcpProtoPath: string): string {
-  const sibling = path.join(path.dirname(mcpProtoPath), "vmm.proto");
-  const configured =
-    config.protoPath && config.protoPath.endsWith("vmm.proto")
-      ? config.protoPath
-      : config.protoPath
-        ? path.join(path.dirname(config.protoPath), "vmm.proto")
-        : undefined;
-  const candidates = [configured, sibling, ...DEFAULT_VMM_PROTO_CANDIDATES].filter(Boolean) as string[];
-  const found = candidates.find((candidate) => existsSync(candidate));
-  if (!found) {
-    throw new Error(
-      "VMM proto path not found. Ensure vulcan-mcp-client/proto/v1/vmm.proto exists next to mcp_service.proto.",
-    );
+/**
+ * Resolve the VMM schema paired with the configured MCP schema.
+ * 解析与已配置 MCP schema 配套的 VMM schema。
+ *
+ * @param {string} mcpProtoPath Existing path to mcp_service.proto.
+ * mcp_service.proto 的现存路径。
+ * @returns {string} Existing path to the sibling vmm.proto file.
+ * 同目录现存 vmm.proto 文件的路径。
+ * @throws {Error} When vmm.proto is missing from the MCP schema directory.
+ * MCP schema 目录中缺少 vmm.proto 时抛出错误。
+ */
+function resolveVmmProtoPath(mcpProtoPath: string): string {
+  // vmmProtoPath is derived only from the configured MCP contract to avoid hidden workspace defaults.
+  // vmmProtoPath 只根据已配置的 MCP 契约推导，避免依赖隐藏工作区默认值。
+  const vmmProtoPath = path.join(path.dirname(mcpProtoPath), "vmm.proto");
+  if (!existsSync(vmmProtoPath)) {
+    throw new Error(`VMM proto file was not found next to the configured mcp_service.proto: ${vmmProtoPath}`);
   }
-  return found;
+  return vmmProtoPath;
 }
 
 // normalizeGrpcEndpoint removes URL schemes because grpc-js expects host:port targets.

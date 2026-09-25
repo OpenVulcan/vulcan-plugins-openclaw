@@ -2,6 +2,7 @@
 // 本文件提供面向 OpenClaw 静态 manifest 工具声明的共享生成辅助能力。
 
 import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { JsonObject, VulcanToolDescriptor } from "./types.js";
 
 // GeneratedModuleRenderParams describes the TypeScript module generated from host descriptors.
@@ -44,10 +45,23 @@ export function normalizeGeneratedDescriptor(
     ...(descriptor.skillId ? { skillId: descriptor.skillId } : {}),
     ...(descriptor.entryName ? { entryName: descriptor.entryName } : {}),
     ...(descriptor.rootName ? { rootName: descriptor.rootName } : {}),
-    ...(descriptor.skillDir ? { skillDir: descriptor.skillDir } : {}),
+    ...(descriptor.skillDir && !isAbsolutePath(descriptor.skillDir) ? { skillDir: descriptor.skillDir } : {}),
     ...(descriptor.source ? { source: descriptor.source } : {}),
   } satisfies VulcanToolDescriptor;
   return normalized;
+}
+
+/**
+ * Detect an absolute path using either POSIX or Windows path rules.
+ * 使用 POSIX 或 Windows 路径规则判断输入是否为绝对路径。
+ *
+ * @param {string} value The path value to inspect.
+ * 要检查的路径值。
+ * @returns {boolean} True when the path is absolute on either platform.
+ * 当路径在任一平台上为绝对路径时返回 true。
+ */
+function isAbsolutePath(value: string): boolean {
+  return path.isAbsolute(value) || path.win32.isAbsolute(value);
 }
 
 // normalizeGeneratedDescriptors deduplicates descriptors by exact OpenClaw tool name.

@@ -12,14 +12,14 @@ Vulcan OpenClaw Plugins provides native OpenClaw adapters for Vulcan LuaSkills t
 
 ## Requirements
 
-- `vulcan-host` / `vulcan-mcp-client` gRPC must be reachable. The default endpoint is `127.0.0.1:19202`.
-- `VULCAN_HOST_PROTO_PATH` should point to `vulcan-mcp-client/proto/v1/mcp_service.proto` unless the default workspace path exists. The plugin now auto-discovers the sibling `vmm.proto` in the same directory for native memory flows.
+- `vulcan-host` gRPC must be reachable. The default endpoint is `127.0.0.1:19202`.
+- The compatible `mcp_service.proto` and `vmm.proto` contracts are bundled under `packages/shared/proto/v1`. Set `VULCAN_HOST_PROTO_PATH` or plugin `config.protoPath` only to override them with a compatible pair in one directory.
 - OpenClaw currently reads `openclaw.plugin.json#contracts.tools` from plugin registry metadata, so LuaSkills tool id changes require local sync and registry refresh.
 
 ## Install
 
 ```powershell
-cd D:\projects\vulcan-plugins-openclaw
+# Run from the repository root; the gRPC protocol files are bundled with this checkout.
 pnpm install
 pnpm build
 pnpm check
@@ -31,7 +31,7 @@ If you want one local install flow that also writes OpenClaw config, enables the
 如果你希望用一条本地安装流程同时完成 OpenClaw 配置写入、必需 hooks 开启，以及 memory slot 绑定，请直接使用：
 
 ```powershell
-cd D:\projects\vulcan-plugins-openclaw
+# Run from the repository root; the gRPC protocol files are bundled with this checkout.
 pnpm install:openclaw-local
 ```
 
@@ -58,9 +58,9 @@ OpenClaw also rejects workspace or deploy directories whose `node_modules` conta
 For a normal local OpenClaw installation, prefer linked package install instead of `plugins.load.paths`. The exact config file location depends on your OpenClaw setup.
 
 ```powershell
-cd D:\projects\vulcan-plugins-openclaw
-openclaw plugins install --link D:\projects\vulcan-plugins-openclaw\artifacts\openclaw-linked-install\vulcan-tools
-openclaw plugins install --link D:\projects\vulcan-plugins-openclaw\artifacts\openclaw-linked-install\vulcan-memory
+$repo = (Get-Location).Path
+openclaw plugins install --link "$repo\artifacts\openclaw-linked-install\vulcan-tools"
+openclaw plugins install --link "$repo\artifacts\openclaw-linked-install\vulcan-memory"
 openclaw plugins registry --refresh
 ```
 
@@ -68,23 +68,24 @@ If OpenClaw blocks `vulcan-tools` during `install --link` because the local host
 
 如果 OpenClaw 因为 `vulcan-tools` 的本地主机自启动 bootstrap 使用了 `child_process` 而拦截 `install --link`，请改用 `pnpm install:openclaw-local`。这条路径会直接写入 `plugins.load.paths`、刷新注册表，并保持运行时与 linked-install 产物一致，不再依赖更严格的包安装扫描通过。
 
-Then enable both plugin entries in OpenClaw config:
+Replace the plugin load path placeholders with paths on your machine before enabling both plugin entries in OpenClaw config. The bundled protocol files are used by default; set `protoPath` only to override them with a compatible `mcp_service.proto` and sibling `vmm.proto`.
+
+修改插件加载路径占位符为本机实际路径后，再启用两个插件。默认使用仓库内置协议文件；只有需要覆盖时才配置 `protoPath`，并确保兼容的 `vmm.proto` 与 `mcp_service.proto` 位于同一目录。
 
 ```json
 {
   "plugins": {
     "load": {
       "paths": [
-        "D:/projects/vulcan-plugins-openclaw/artifacts/openclaw-linked-install/vulcan-tools",
-        "D:/projects/vulcan-plugins-openclaw/artifacts/openclaw-linked-install/vulcan-memory"
+        "<absolute-path-to-clone>/artifacts/openclaw-linked-install/vulcan-tools",
+        "<absolute-path-to-clone>/artifacts/openclaw-linked-install/vulcan-memory"
       ]
     },
     "entries": {
       "vulcan-tools": {
         "enabled": true,
         "config": {
-          "endpoint": "127.0.0.1:19202",
-          "protoPath": "D:/projects/vulcan-mcp-client/proto/v1/mcp_service.proto"
+          "endpoint": "127.0.0.1:19202"
         }
       },
       "vulcan-memory": {
@@ -95,7 +96,6 @@ Then enable both plugin entries in OpenClaw config:
         },
         "config": {
           "endpoint": "127.0.0.1:19202",
-          "protoPath": "D:/projects/vulcan-mcp-client/proto/v1/mcp_service.proto",
           "bindings": {
             "defaultUserId": 1,
             "defaultProjectId": 1,
@@ -136,7 +136,7 @@ Host service notes:
 
 主机服务说明：
 
-- Run `vulcan-host` / `vulcan-mcp-client` as one external system service shared by your local hosts instead of expecting the plugin to spawn it for you.
+- Run `vulcan-host` as one external system service shared by your local hosts; the bundled protocol files let the plugin connect without a sibling client checkout.
 - When the endpoint is unreachable, Vulcan tools stay registered, hooks skip live recall or writeback work, and the plugin injects one temporary notice asking the model to tell the user that the Vulcan service is currently unavailable.
 - Registered Vulcan tools fail fast with one explicit unavailable message while the plugin retries the gRPC endpoint in the background.
 - After the service becomes reachable again, later calls and hooks resume normally without requiring you to re-enable the plugin.
@@ -171,7 +171,7 @@ Binding rules:
 `vulcan-tools` always registers `vulcan_luaskill_call` as a dispatcher fallback. First-class LuaSkills tools require a generated static manifest because OpenClaw does not dynamically mutate `contracts.tools` at runtime.
 
 ```powershell
-cd D:\projects\vulcan-plugins-openclaw
+# Run from the repository root.
 pnpm sync:tools
 openclaw plugins registry --refresh
 ```
@@ -183,7 +183,7 @@ After LuaSkills `install`, `update`, or `uninstall`, run the sync command again.
 `vulcan-memory` now exposes `vulcan_memory_search` / `vulcan_memory_get` as the primary model-facing Vulcan memory tools, while `memory_search` / `memory_get` remain optional bridge tools for workflows that still insist on the canonical OpenClaw names. The primary Vulcan tools reuse VMM-owned descriptions and schemas synchronized from vulcan-host:
 
 ```powershell
-cd D:\projects\vulcan-plugins-openclaw
+# Run from the repository root.
 pnpm sync:memory
 openclaw plugins registry --refresh
 ```
